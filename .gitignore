@@ -1,0 +1,45 @@
+# Secretos y configuración local
+.env
+CLAUDE.md
+.claude/
+*.pem
+.aws/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Spark y Delta en local
+spark-warehouse/
+metastore_db/
+derby.log
+checkpoints/
+data/
+
+# Airflow
+airflow/logs/
+airflow/plugins/__pycache__/
+airflow.db
+airflow-webserver.pid
+
+# Infraestructura como código
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+cdk.out/
+
+# Lambda empaquetada
+*.zip
+
+# Editores y sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+~$*

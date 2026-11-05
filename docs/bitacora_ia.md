@@ -1,0 +1,14 @@
+# Bitácora de delegación a agentes de IA
+
+Requisito de la guía (sección 7): registrar qué hizo el agente y qué decidió el equipo. Sin esta bitácora se descuenta el 10 % del E2.
+
+Cómo llenarla: una fila por tarea delegada, no por mensaje. La columna "Decisión del equipo" registra lo que el equipo aceptó, cambió o descartó, y por qué. Quien registra la fila debe poder explicar el resultado en la defensa.
+
+| # | Fecha | Integrante | Agente | Qué se le pidió | Qué produjo | Decisión del equipo |
+|---|---|---|---|---|---|---|
+| 1 | 2026-10-11 | Mateo García | Claude (Claude Code) | Explicar el modelo constelación de la capa Gold | Explicación de grano, dimensiones conformadas y *drill-across*. Detectó que `fact_alert` no tenía llave a `dim_time` y por eso la pregunta 5 no se podía responder | Se agregó `time_key` a `fact_alert` en el documento y en el diagrama |
+| 2 | 2026-10-11 | Mateo García | Claude (Claude Code) | Redactar la Sección 5 del E1 (plan de implementación) | Tablas de responsabilidades, cronograma por hitos y riesgos con mitigación, insertadas en el .docx | El equipo aprobó la asignación de componentes y movió el inicio del cronograma a S13 |
+| 3 | 2026-10-15 | Mateo García | Claude (Claude Code) | Explicar qué simulan los catálogos CSV | Los CSV representan el export diario de las tablas maestras del core relacional; señaló el riesgo de IDs inconsistentes entre productor y catálogos | _Completar_ |
+| 4 | 2026-11-04 | Mateo García | Claude (Claude Code) | Rehacer el diagrama con íconos de AWS a partir de los apuntes de la asesoría | Diagrama nuevo (`docs/arquitectura/`) y resumen de cambios (`docs/cambios_vs_E1.md`) | El equipo eligió DynamoDB + SNS para alertas, dejar ML como trabajo futuro y que Airflow orqueste Bronze → Silver → Gold. MSK por sugerencia del profesor |
+| 5 | 2026-11-05 | Mateo García | Claude (Claude Code) | Proponer la estructura inicial del repositorio según el checklist de la guía | Carpetas, README raíz y por componente, `.gitignore`, `.env.example`, esqueleto de `docker-compose.yml` y esta bitácora | Se aceptó la estructura. El equipo decidió que el agente no hace commits: solo propone los mensajes |
+| 6 | 2026-11-05 | Mateo García | Claude (Claude Code) | Investigar el estado del arte en detección de fraude para sustentar las decisiones (pedido del profesor) | `docs/estado_del_arte.md`: latencias por capa, métricas de falsos positivos y negativos, reglas vs. ML, respaldo de las 4 reglas, contexto colombiano y 5 implicaciones de diseño, con fuentes | _Completar: revisar fuentes y decidir sobre `is_fraud_injected`_ |

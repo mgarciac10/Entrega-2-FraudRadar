@@ -1,0 +1,17 @@
+# FraudRadar: servicios que corren en contenedores.
+# Esqueleto inicial. Cada responsable agrega su servicio a medida que lo implementa.
+#
+# Servicios previstos y perfiles:
+#   producer         productor sintético                       perfil: producer   (EC2 t3.medium)
+#   spark-master     Spark 3.5 + Delta Lake                    perfil: spark      (EC2 t3.xlarge)
+#   spark-worker
+#   ingest-bronze    job de streaming (restart: always)        perfil: spark
+#   detect-fraud     job de streaming (restart: always)        perfil: spark
+#   airflow-*        postgres, scheduler, webserver            perfil: airflow    (EC2 t3.medium)
+#   kafka            Kafka en modo KRaft para desarrollo local perfil: local      (en AWS se usa MSK)
+#
+# MSK, S3, DynamoDB, Lambda, SNS, Glue y Athena son servicios gestionados: se crean desde infra/.
+
+name: fraudradar
+
+services: {}
