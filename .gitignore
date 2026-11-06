@@ -1,6 +1,7 @@
 # Secretos y configuración local
 .env
 CLAUDE.md
+PROGRESS.md
 .claude/
 *.pem
 .aws/
