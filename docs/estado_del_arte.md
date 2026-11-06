@@ -64,7 +64,7 @@ El Fraud Detection Handbook (Le Borgne et al., 2022) desplaza una semana las ven
 ### Qué hace FraudRadar
 
 - **Pregunta 7:** la tasa de falsos positivos por regla se calcula con el feedback del analista (alerta confirmada o descartada en DynamoDB, que llega a `fact_alert`).
-- **Ventaja de los datos sintéticos:** el productor sabe qué transacciones son fraude inyectado. Si esa etiqueta viaja con el evento (oculta para las reglas), Gold puede calcular **precisión y recall exactos por regla**, algo imposible con datos reales. **Recomendación:** agregar el campo `is_fraud_injected` al evento y a `fact_transaction`. Es una decisión del equipo porque cambia el contrato del evento.
+- **Ventaja de los datos sintéticos:** el productor sabe qué transacciones son fraude inyectado. Si esa etiqueta viaja con el evento (oculta para las reglas), Gold puede calcular **precisión y recall exactos por regla**, algo imposible con datos reales. **Decisión del equipo (2026-11-05):** se agrega el campo `is_fraud_injected` al evento y a `fact_transaction`. `detect_fraud` no lo lee; solo se usa en Gold para medir las reglas.
 
 ## 3. Reglas, machine learning o híbrido
 
@@ -113,7 +113,7 @@ Trabajo futuro: entrenar un modelo con esas features y etiquetas (por ejemplo co
 | # | Implicación | Estado |
 |---|---|---|
 | 1 | Presentar FraudRadar como monitoreo posterior (capa 2) y la calificación en línea como trabajo futuro | Aplicar en la presentación y en el ADR-02 |
-| 2 | Agregar `is_fraud_injected` al evento y a `fact_transaction` para medir precisión y recall por regla | Por decidir (cambia el contrato del evento) |
+| 2 | Agregar `is_fraud_injected` al evento y a `fact_transaction` para medir precisión y recall por regla Aprobado: aplicar en `producer.py`, `spark/common/` y `silver_to_gold` |
 | 3 | Umbrales de las reglas como configuración, no en el código | Aplicar en `detect_fraud` |
 | 4 | Machine learning como trabajo futuro, con AutoGluon/SageMaker como ruta de AWS | Documentar en el ADR correspondiente |
 | 5 | Medir en la demo la latencia real evento → alerta (p50 y p95) | Ya está en RNF-04 |

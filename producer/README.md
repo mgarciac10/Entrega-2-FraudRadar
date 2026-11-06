@@ -13,3 +13,4 @@ Reglas de implementación:
 
 - El productor toma usuarios y comercios de los mismos catálogos, para que los joins de Silver no fallen.
 - Productor idempotente: `enable.idempotence=true`, `acks=all`.
+- Cada evento lleva `is_fraud_injected` (true si el productor lo generó como fraude). Las reglas no lo usan; Gold lo usa para medir precisión y recall por regla.
