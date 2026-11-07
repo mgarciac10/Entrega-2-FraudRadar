@@ -22,3 +22,30 @@ Herramienta: **AWS CloudFormation**. El estado vive en AWS, así que cualquier i
 - **Por sesión:** MSK y las EC2. Se crea al empezar a trabajar y se borra al terminar.
 
 Perfil de AWS CLI del proyecto: `fraudradar` (región `us-east-2`: es la única habilitada en la cuenta del proyecto).
+
+## Cómo usarlo
+
+Requiere el perfil `fraudradar` autenticado (`aws login --profile fraudradar`) en `us-east-2`.
+
+```bash
+cp .env.example .env   # y completar ALERT_EMAIL
+bash infra/scripts/deploy_persistent.sh
+```
+
+En Windows hay que anteponer `bash` (un `.sh` solo con su ruta se abre en el editor) y usar Git Bash: en PowerShell, `bash` puede apuntar a WSL, que no ve el perfil de AWS.
+
+Los scripts leen el `.env` de la raíz (está en `.gitignore`), así que el correo no queda en el repositorio. El script crea o actualiza el stack `fraudradar-persistent`. `bash infra/scripts/destroy_persistent.sh` lo borra (pide confirmación).
+
+### Stack persistente (`cloudformation/persistent.yaml`)
+
+Se construye por partes, una por commit:
+
+| Parte | Recursos | Cómo se prueba |
+|---|---|---|
+| 1 | Presupuestos `fraudradar-consumo-credito` y `fraudradar-cargo-real` | `aws budgets describe-budgets --account-id <cuenta> --profile fraudradar` |
+
+Los presupuestos:
+
+- **`fraudradar-consumo-credito`** excluye los créditos y mide el gasto bruto contra el crédito de USD 100. Avisa al 50 % y 80 % del consumo y cuando la proyección supera el 100 %. Un presupuesto normal descuenta los créditos y marcaría siempre USD 0.
+- **`fraudradar-cargo-real`** incluye créditos e impuestos y avisa si lo que iría a la tarjeta supera USD 1. Puede saltar por el IVA, porque los créditos no cubren impuestos.
+

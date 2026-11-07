@@ -1,0 +1,116 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  FraudRadar - stack persistente. Recursos que se crean una vez y casi no
+  cuestan cuando el pipeline está apagado. Se construye por partes:
+  1) presupuestos de costo.
+
+Parameters:
+  NotificationEmail:
+    Type: String
+    Description: Correo que recibe las alertas de AWS Budgets (no se guarda en el repositorio).
+    AllowedPattern: "[^@\\s]+@[^@\\s]+\\.[^@\\s]+"
+  CreditUsd:
+    Type: Number
+    Default: 100
+    Description: Crédito promocional del proyecto en USD; es el tope que vigilan los presupuestos.
+  RealChargeUsd:
+    Type: Number
+    Default: 1
+    Description: Monto que llegaría a la tarjeta (después de créditos) que dispara la alerta de cargo real.
+
+Resources:
+  # Mide el consumo BRUTO (excluye créditos) contra el crédito disponible.
+  # Un presupuesto normal descuenta los créditos y marcaría USD 0 siempre.
+  CreditConsumptionBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: fraudradar-consumo-credito
+        BudgetType: COST
+        TimeUnit: ANNUALLY
+        BudgetLimit:
+          Amount: !Ref CreditUsd
+          Unit: USD
+        CostTypes:
+          IncludeCredit: false
+          IncludeRefund: false
+          IncludeTax: true
+          IncludeSubscription: true
+          IncludeUpfront: true
+          IncludeRecurring: true
+          IncludeSupport: true
+          IncludeDiscount: true
+          UseBlended: false
+          UseAmortized: false
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 50
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref NotificationEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref NotificationEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref NotificationEmail
+
+  # Mide lo que realmente iría a la tarjeta: incluye créditos e impuestos.
+  # Los créditos no cubren impuestos, así que puede saltar por el IVA.
+  RealChargeBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: fraudradar-cargo-real
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref RealChargeUsd
+          Unit: USD
+        CostTypes:
+          IncludeCredit: true
+          IncludeRefund: true
+          IncludeTax: true
+          IncludeSubscription: true
+          IncludeUpfront: true
+          IncludeRecurring: true
+          IncludeSupport: true
+          IncludeDiscount: true
+          UseBlended: false
+          UseAmortized: false
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref NotificationEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref NotificationEmail
+
+Outputs:
+  CreditConsumptionBudgetName:
+    Value: fraudradar-consumo-credito
+  RealChargeBudgetName:
+    Value: fraudradar-cargo-real
