@@ -41,6 +41,7 @@ Diagrama editable: [`docs/arquitectura/arquitectura.drawio`](docs/arquitectura/a
     ├── arquitectura/    diagrama vigente
     ├── adr/             decisiones de arquitectura
     ├── estado_del_arte.md
+    ├── expo.md          puntos para la exposición
     ├── cambios_vs_E1.md
     └── bitacora_ia.md   bitácora de delegación a agentes de IA
 ```
