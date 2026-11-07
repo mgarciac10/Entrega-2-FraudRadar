@@ -21,4 +21,4 @@ Herramienta: **AWS CloudFormation**. El estado vive en AWS, así que cualquier i
 - **Persistente:** S3, DynamoDB, SNS, Lambda, Glue, Budgets e IAM. Se crea una vez.
 - **Por sesión:** MSK y las EC2. Se crea al empezar a trabajar y se borra al terminar.
 
-Perfil de AWS CLI del proyecto: `fraudradar` (región `us-east-1`).
+Perfil de AWS CLI del proyecto: `fraudradar` (región `us-east-2`: es la única habilitada en la cuenta del proyecto).

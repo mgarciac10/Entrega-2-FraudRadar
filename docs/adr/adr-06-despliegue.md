@@ -19,7 +19,7 @@
 
 ## Decisión
 
-Un esquema mixto en `us-east-1`:
+Un esquema mixto en `us-east-2` (Ohio), la región habilitada para el proyecto de la cuenta (en `us-east-1` una política de la organización deniega las llamadas):
 
 | Tipo | Servicios | Por qué |
 |---|---|---|
