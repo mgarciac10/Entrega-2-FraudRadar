@@ -1,0 +1,255 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  FraudRadar - stack por sesión. Recursos que cobran por hora (MSK y 2 EC2).
+  Se crea al empezar a trabajar y se BORRA al terminar (session_down.sh).
+  Los datos viven en el stack persistente (S3 y DynamoDB), no aquí.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC por defecto (la descubre session_up.sh).
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Al menos 2 subredes en zonas distintas (MSK pone un broker en cada una).
+  S3Bucket:
+    Type: String
+    Description: Bucket del lakehouse (stack persistente).
+  AlertsTable:
+    Type: String
+    Default: fraud_alerts
+  # 3.9.x.kraft rechaza kafka.t3.small ("Unsupported InstanceType": solo m5, m7g y express).
+  # El modo ZooKeeper (3.9.x) sí admite T3, que es lo único que cabe en el presupuesto.
+  KafkaVersion:
+    Type: String
+    Default: 3.9.x
+  SparkInstanceType:
+    Type: String
+    Default: t3.xlarge
+  AppInstanceType:
+    Type: String
+    Default: t3.medium
+  LatestAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Amazon Linux 2023 más reciente.
+
+Resources:
+  # --- Red -------------------------------------------------------------
+  # Las EC2 no abren ningún puerto al exterior: se entra por Session Manager.
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: FraudRadar - EC2 de Spark, Airflow y productor
+      VpcId: !Ref VpcId
+
+  # Spark (master 7077, UIs) y Airflow se hablan entre sí dentro del mismo grupo.
+  InstanceSelfIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref InstanceSecurityGroup
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref InstanceSecurityGroup
+
+  MskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: FraudRadar - brokers de MSK
+      VpcId: !Ref VpcId
+
+  # Solo las EC2 del proyecto pueden hablar con Kafka, y solo por TLS (9094).
+  MskFromInstances:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref MskSecurityGroup
+      IpProtocol: tcp
+      FromPort: 9094
+      ToPort: 9094
+      SourceSecurityGroupId: !Ref InstanceSecurityGroup
+
+  MskSelfIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref MskSecurityGroup
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref MskSecurityGroup
+
+  # --- Kafka (ADR-01) ----------------------------------------------------
+  # CP: RF 2 con min.insync.replicas 2 y sin elección de líder "sucia". Si un
+  # broker cae (o MSK lo parcha), las escrituras se bloquean en vez de perder datos.
+  # El topic transactions (6 particiones) se crea después, desde una EC2.
+  MskConfiguration:
+    Type: AWS::MSK::Configuration
+    Properties:
+      Name: fraudradar-config
+      KafkaVersionsList:
+        - !Ref KafkaVersion
+      ServerProperties: |
+        auto.create.topics.enable=false
+        default.replication.factor=2
+        min.insync.replicas=2
+        num.partitions=6
+        unclean.leader.election.enable=false
+        log.retention.hours=72
+
+  MskCluster:
+    Type: AWS::MSK::Cluster
+    Properties:
+      ClusterName: fraudradar-msk
+      KafkaVersion: !Ref KafkaVersion
+      NumberOfBrokerNodes: 2
+      BrokerNodeGroupInfo:
+        InstanceType: kafka.t3.small
+        ClientSubnets:
+          - !Select [0, !Ref SubnetIds]
+          - !Select [1, !Ref SubnetIds]
+        SecurityGroups:
+          - !Ref MskSecurityGroup
+        StorageInfo:
+          EBSStorageInfo:
+            VolumeSize: 10
+      ConfigurationInfo:
+        Arn: !Ref MskConfiguration
+        Revision: !GetAtt MskConfiguration.LatestRevision.Revision
+      # TLS en tránsito y sin autenticación de cliente: el acceso se limita con el
+      # grupo de seguridad. En producción se usaría IAM o mTLS.
+      EncryptionInfo:
+        EncryptionInTransit:
+          ClientBroker: TLS
+          InCluster: true
+      ClientAuthentication:
+        Unauthenticated:
+          Enabled: true
+      EnhancedMonitoring: DEFAULT
+
+  # --- Cómputo -----------------------------------------------------------
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Session Manager y Run Command, sin llaves SSH ni puertos abiertos.
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: lakehouse-y-alertas
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub "arn:aws:s3:::${S3Bucket}"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub "arn:aws:s3:::${S3Bucket}/*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AlertsTable}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AlertsTable}/index/*"
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  # EC2 #1: Spark (master, worker y jobs de streaming y batch)
+  SparkInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmi
+      InstanceType: !Ref SparkInstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      MetadataOptions:
+        HttpTokens: required
+      NetworkInterfaces:
+        - DeviceIndex: "0"
+          SubnetId: !Select [0, !Ref SubnetIds]
+          AssociatePublicIpAddress: true
+          GroupSet:
+            - !Ref InstanceSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 40
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          exec > /var/log/fraudradar-bootstrap.log 2>&1
+          dnf install -y docker git
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -fsSL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          echo "bootstrap terminado"
+      Tags:
+        - Key: Name
+          Value: fraudradar-spark
+
+  # EC2 #2: Airflow y productor
+  AppInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmi
+      InstanceType: !Ref AppInstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      MetadataOptions:
+        HttpTokens: required
+      NetworkInterfaces:
+        - DeviceIndex: "0"
+          SubnetId: !Select [0, !Ref SubnetIds]
+          AssociatePublicIpAddress: true
+          GroupSet:
+            - !Ref InstanceSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 30
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          exec > /var/log/fraudradar-bootstrap.log 2>&1
+          dnf install -y docker git
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -fsSL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          echo "bootstrap terminado"
+      Tags:
+        - Key: Name
+          Value: fraudradar-app
+
+Outputs:
+  MskClusterArn:
+    Value: !Ref MskCluster
+  SparkInstanceId:
+    Value: !Ref SparkInstance
+  AppInstanceId:
+    Value: !Ref AppInstance
+  SparkPrivateIp:
+    Value: !GetAtt SparkInstance.PrivateIp
+  AppPrivateIp:
+    Value: !GetAtt AppInstance.PrivateIp

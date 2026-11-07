@@ -38,8 +38,9 @@ Usar **MSK provisionado** con Kafka 3.x y 2 brokers `kafka.t3.small`, uno en cad
 
 - **Costo.** Unos USD 0,09 por hora por los dos brokers (USD 0,0456 cada uno, según fuentes de terceros), más el almacenamiento. Un clúster provisionado no se puede pausar, así que se crea y se destruye en cada sesión de trabajo (ADR-06).
 - **Checkpoints al recrear el clúster.** Al crear un clúster nuevo, los checkpoints de Spark apuntan a offsets que ya no existen. Cada sesión usa una ruta de checkpoint nueva para los jobs de streaming. No hay duplicados, porque los eventos del clúster nuevo son nuevos; lo que ya se procesó está en Bronze, que vive en S3.
+- **Modo ZooKeeper en lugar de KRaft.** Se intentó Kafka 3.9 con KRaft, pero MSK rechazó `kafka.t3.small` ("Unsupported InstanceType"): para KRaft solo ofrece brokers m5, m7g y express, con un costo por hora varias veces mayor. Se usa `3.9.x` (ZooKeeper), que sí admite T3. Para los clientes (productor y Spark) es transparente, porque se conectan por los brokers TLS; KRaft es la dirección de Kafka y quedaría como mejora con más presupuesto.
 - **Capacidad limitada.** `kafka.t3.small` es una instancia de ráfaga para cargas pequeñas. El diseño escala a 3.000 ev/s agregando brokers o subiendo el tipo de instancia, sin cambiar código. En el lab solo se demuestra el rango de RNF-01.
-- **Disponibilidad reducida.** Con factor de replicación 2, la caída de un broker detiene las escrituras. Producción usaría 3 brokers en 3 zonas con `min.insync.replicas=2`, que tolera una caída sin perder disponibilidad.
+- **Disponibilidad reducida.** Con factor de replicación 2 y `min.insync.replicas=2`, la caída de un broker detiene las escrituras. Lo mismo ocurre cuando MSK parcha o actualiza un broker, que lo hace de forma escalonada: AWS recomienda para alta disponibilidad 3 zonas, factor 3 y `min.insync.replicas` como máximo RF − 1, y advierte que un RF de 2 puede perder datos. Esta configuración es la opuesta a propósito (prefiere bloquear antes que perder o duplicar, ver CAP) y el productor tolera cortes de hasta 2 minutos con `delivery.timeout.ms`. Producción usaría 3 brokers en 3 zonas con `min.insync.replicas=2`, que tolera una caída sin perder disponibilidad.
 - **Particiones fijas.** Cambiar el número de particiones después rompe el mapeo llave → partición, así que las 6 particiones se fijan desde el inicio.
 
 ## Cambio respecto al E1
@@ -48,6 +49,7 @@ Antes, Kafka corría en Docker sobre EC2 dentro del Learner Lab. Ahora se usa MS
 
 ## Fuentes
 
+- [Mejores prácticas de MSK: RF, `min.insync.replicas`, particiones por broker (300 recomendadas en `kafka.t3.small`) y brokers T3 para desarrollo](https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices.html)
 - [Amazon MSK: crear un clúster provisionado (subredes y brokers por zona)](https://docs.aws.amazon.com/msk/latest/developerguide/create-cluster-console.html)
 - [Amazon MSK pricing](https://aws.amazon.com/msk/pricing/) y precio de `kafka.t3.small` según [Airbyte](https://airbyte.com/data-engineering-resources/apache-kafka-pricing)
 - [`docs/estado_del_arte.md`](../estado_del_arte.md), sección 1 (FraudRadar como monitoreo posterior)
