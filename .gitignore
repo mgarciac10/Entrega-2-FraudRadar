@@ -37,6 +37,7 @@ cdk.out/
 
 # Lambda empaquetada
 *.zip
+infra/.build/
 
 # Editores y sistema
 .vscode/

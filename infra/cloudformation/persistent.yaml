@@ -3,12 +3,24 @@ Description: >
   FraudRadar - stack persistente. Recursos que se crean una vez y casi no
   cuestan cuando el pipeline está apagado. Se construye por partes:
   1) presupuestos de costo, 2) bucket de S3 del lakehouse,
-  3) tabla DynamoDB de alertas.
+  3) tabla DynamoDB de alertas, 4) aviso por SNS con la Lambda notify_alert.
 
 Parameters:
-  NotificationEmail:
+  LambdaCodeKey:
     Type: String
-    Description: Correo que recibe las alertas de AWS Budgets (no se guarda en el repositorio).
+    Description: >
+      Clave en el bucket del lakehouse del zip de notify_alert. La define
+      deploy_persistent.sh al empaquetar y subir lambda/notify_alert/handler.py.
+  BudgetEmail:
+    Type: String
+    Description: >
+      Correo del dueño de la cuenta para los avisos de costo (AWS Budgets). Cambiarlo
+      obliga a CloudFormation a reemplazar los presupuestos, que tienen nombre fijo,
+      y el reemplazo falla: para cambiarlo hay que borrar antes los dos presupuestos.
+    AllowedPattern: "[^@\\s]+@[^@\\s]+\\.[^@\\s]+"
+  AlertEmail:
+    Type: String
+    Description: Correo del analista que recibe las alertas de fraude por SNS (se puede cambiar sin riesgo).
     AllowedPattern: "[^@\\s]+@[^@\\s]+\\.[^@\\s]+"
   CreditUsd:
     Type: Number
@@ -85,6 +97,90 @@ Resources:
       StreamSpecification:
         StreamViewType: NEW_IMAGE
 
+  # --- Aviso al analista (ADR-04): DynamoDB Streams -> Lambda -> SNS ---
+
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: fraud-alerts
+
+  # Requiere confirmar la suscripción desde el correo que envía AWS.
+  AlertsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertsTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  NotifyLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/fraudradar-notify-alert
+      RetentionInDays: 14
+
+  NotifyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: leer-stream-y-publicar
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                Resource: !GetAtt FraudAlertsTable.StreamArn
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref AlertsTopic
+
+  NotifyFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: NotifyLogGroup
+    Properties:
+      FunctionName: fraudradar-notify-alert
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !GetAtt NotifyRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Code:
+        S3Bucket: !Ref LakeBucket
+        S3Key: !Ref LambdaCodeKey
+      Environment:
+        Variables:
+          TOPIC_ARN: !Ref AlertsTopic
+
+  # Solo los INSERT (alertas nuevas): un cambio de estado no genera aviso.
+  # Sin ventana de espera (latencia) y con respuesta de lote parcial.
+  NotifyEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt FraudAlertsTable.StreamArn
+      FunctionName: !Ref NotifyFunction
+      StartingPosition: LATEST
+      BatchSize: 10
+      MaximumBatchingWindowInSeconds: 0
+      MaximumRetryAttempts: 3
+      BisectBatchOnFunctionError: true
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName": ["INSERT"]}'
+
   # Solo se permite acceso por HTTPS.
   LakeBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -135,7 +231,7 @@ Resources:
             ThresholdType: PERCENTAGE
           Subscribers:
             - SubscriptionType: EMAIL
-              Address: !Ref NotificationEmail
+              Address: !Ref BudgetEmail
         - Notification:
             NotificationType: ACTUAL
             ComparisonOperator: GREATER_THAN
@@ -143,7 +239,7 @@ Resources:
             ThresholdType: PERCENTAGE
           Subscribers:
             - SubscriptionType: EMAIL
-              Address: !Ref NotificationEmail
+              Address: !Ref BudgetEmail
         - Notification:
             NotificationType: FORECASTED
             ComparisonOperator: GREATER_THAN
@@ -151,7 +247,7 @@ Resources:
             ThresholdType: PERCENTAGE
           Subscribers:
             - SubscriptionType: EMAIL
-              Address: !Ref NotificationEmail
+              Address: !Ref BudgetEmail
 
   # Mide lo que realmente iría a la tarjeta: incluye créditos e impuestos.
   # Los créditos no cubren impuestos, así que puede saltar por el IVA.
@@ -184,7 +280,7 @@ Resources:
             ThresholdType: PERCENTAGE
           Subscribers:
             - SubscriptionType: EMAIL
-              Address: !Ref NotificationEmail
+              Address: !Ref BudgetEmail
         - Notification:
             NotificationType: FORECASTED
             ComparisonOperator: GREATER_THAN
@@ -192,13 +288,15 @@ Resources:
             ThresholdType: PERCENTAGE
           Subscribers:
             - SubscriptionType: EMAIL
-              Address: !Ref NotificationEmail
+              Address: !Ref BudgetEmail
 
 Outputs:
   LakeBucketName:
     Value: !Ref LakeBucket
   FraudAlertsTableName:
     Value: !Ref FraudAlertsTable
+  AlertsTopicArn:
+    Value: !Ref AlertsTopic
   FraudAlertsStreamArn:
     Value: !GetAtt FraudAlertsTable.StreamArn
   CreditConsumptionBudgetName:

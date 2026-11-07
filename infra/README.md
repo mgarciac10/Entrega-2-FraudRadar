@@ -28,7 +28,7 @@ Perfil de AWS CLI del proyecto: `fraudradar` (región `us-east-2`: es la única 
 Requiere el perfil `fraudradar` autenticado (`aws login --profile fraudradar`) en `us-east-2`.
 
 ```bash
-cp .env.example .env   # y completar ALERT_EMAIL
+cp .env.example .env   # y completar BUDGET_EMAIL y ALERT_EMAIL
 bash infra/scripts/deploy_persistent.sh
 ```
 
@@ -45,6 +45,7 @@ Se construye por partes, una por commit:
 | 1 | Presupuestos `fraudradar-consumo-credito` y `fraudradar-cargo-real` | `aws budgets describe-budgets --account-id <cuenta> --profile fraudradar` |
 | 2 | Bucket `fraudradar-<cuenta>-us-east-2` | Escribir, leer y borrar un objeto de prueba (ver abajo) |
 | 3 | Tabla DynamoDB `fraud_alerts` con Streams | `bash infra/scripts/test_dynamodb.sh` |
+| 4 | Topic SNS `fraud-alerts`, Lambda `notify_alert` y su event source mapping | `bash infra/scripts/test_notify.sh` y confirmar el correo |
 
 Los presupuestos:
 
@@ -77,4 +78,22 @@ aws s3 rm s3://fraudradar-<cuenta>-us-east-2/landing/prueba.txt --profile fraudr
 - **Streams `NEW_IMAGE`:** alimenta la Lambda `notify_alert`, que avisa solo de los INSERT.
 
 `bash infra/scripts/test_dynamodb.sh` verifica cuatro cosas: la primera escritura condicional crea la alerta, reescribirla es rechazado (idempotencia), el índice la encuentra y Streams está activado. Deja la tabla vacía al terminar.
+
+### Aviso por SNS y Lambda `notify_alert`
+
+Flujo: DynamoDB Streams → Lambda → topic SNS `fraud-alerts` → correo del analista.
+
+- **El código vive en `lambda/notify_alert/handler.py`.** `deploy_persistent.sh` lo empaqueta, lo sube a `s3://<bucket>/artifacts/lambda/` con el hash del código en el nombre y se lo pasa al stack. Si el código no cambia, la función no se actualiza.
+- **Solo los INSERT disparan aviso** (filtro del event source mapping): cambiar el estado de una alerta no genera otro correo.
+- **Sin ventana de espera** (`MaximumBatchingWindowInSeconds: 0`) para no sumar latencia, y con respuesta de lote parcial: solo se reintentan los registros que fallan.
+- **Al menos una vez:** Lambda puede entregar un registro dos veces, y en un caso raro llegaría un correo duplicado. Se acepta (ADR-04).
+- **Sin cola de mensajes fallidos (DLQ):** si un registro falla las 3 veces, se descarta y queda el error en CloudWatch (14 días). Agregar una DLQ queda como mejora.
+- **Dos correos distintos:** `BUDGET_EMAIL` (dueño de la cuenta, avisos de costo) y `ALERT_EMAIL` (analista, alertas de fraude). Cambiar `BUDGET_EMAIL` obliga a CloudFormation a reemplazar los presupuestos y falla por el nombre fijo; `ALERT_EMAIL` se puede cambiar sin problema (la suscripción nueva debe confirmarse). Hay que **confirmar la suscripción** con el enlace del correo "AWS Notification - Subscription Confirmation"; sin eso SNS no entrega nada.
+
+Pruebas:
+
+```bash
+python -m unittest tests.test_notify_alert -v   # unitarias, sin AWS (requiere boto3)
+bash infra/scripts/test_notify.sh               # extremo a extremo, con AWS
+```
 
