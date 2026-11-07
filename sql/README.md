@@ -10,7 +10,7 @@
 | `q6_canal_comercio_sospechoso.sql` | ¿Qué canal y qué categoría de comercio concentran el mayor monto sospechoso? |
 | `q7_falsos_positivos_por_regla.sql` | ¿Qué porcentaje de alertas de cada regla fue confirmado como fraude? |
 | `q8_fraude_evitable.sql` | De cada ataque inyectado, ¿cuánto monto ocurrió antes de la primera alerta (no evitable) y cuánto después (evitable si el analista reacciona)? Compara contra el reporte diario actual |
-| `q9_precision_recall_por_regla.sql` | Precisión y recall exactos por regla, cruzando `is_fraud_injected` con las alertas |
+| `q9_precision_recall_por_regla.sql` | Precisión y recall exactos por regla, cruzando `attack_pattern` (qué regla debía detectar cada ataque) con las alertas |
 
 **Q8 es la métrica de valor del proyecto.** FraudRadar no detiene la primera transacción de un ataque; Q8 mide cuánto del fraude posterior sí se evita y lo compara con el escenario del reporte diario (donde se evitaría casi nada). Se muestra en la demo junto a la latencia evento → alerta.
 
