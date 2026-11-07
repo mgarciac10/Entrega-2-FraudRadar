@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   FraudRadar - stack persistente. Recursos que se crean una vez y casi no
   cuestan cuando el pipeline está apagado. Se construye por partes:
-  1) presupuestos de costo.
+  1) presupuestos de costo, 2) bucket de S3 del lakehouse.
 
 Parameters:
   NotificationEmail:
@@ -19,6 +19,57 @@ Parameters:
     Description: Monto que llegaría a la tarjeta (después de créditos) que dispara la alerta de cargo real.
 
 Resources:
+  # Un solo bucket para todo el pipeline, separado por prefijos:
+  #   landing/      CSV diarios del core (fuente de ingest_catalogs)
+  #   lake/         tablas Delta Bronze, Silver y Gold
+  #   checkpoints/  checkpoints de Spark Structured Streaming
+  #   athena-results/  resultados de las consultas de Athena
+  # Los prefijos no se crean aquí: nacen al escribir el primer objeto.
+  LakeBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "fraudradar-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: abort-incomplete-multipart
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+          - Id: expire-athena-results
+            Status: Enabled
+            Prefix: athena-results/
+            ExpirationInDays: 30
+
+  # Solo se permite acceso por HTTPS.
+  LakeBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LakeBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt LakeBucket.Arn
+              - !Sub "${LakeBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
   # Mide el consumo BRUTO (excluye créditos) contra el crédito disponible.
   # Un presupuesto normal descuenta los créditos y marcaría USD 0 siempre.
   CreditConsumptionBudget:
@@ -110,6 +161,8 @@ Resources:
               Address: !Ref NotificationEmail
 
 Outputs:
+  LakeBucketName:
+    Value: !Ref LakeBucket
   CreditConsumptionBudgetName:
     Value: fraudradar-consumo-credito
   RealChargeBudgetName:

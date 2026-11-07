@@ -43,9 +43,28 @@ Se construye por partes, una por commit:
 | Parte | Recursos | Cómo se prueba |
 |---|---|---|
 | 1 | Presupuestos `fraudradar-consumo-credito` y `fraudradar-cargo-real` | `aws budgets describe-budgets --account-id <cuenta> --profile fraudradar` |
+| 2 | Bucket `fraudradar-<cuenta>-us-east-2` | Escribir, leer y borrar un objeto de prueba (ver abajo) |
 
 Los presupuestos:
 
 - **`fraudradar-consumo-credito`** excluye los créditos y mide el gasto bruto contra el crédito de USD 100. Avisa al 50 % y 80 % del consumo y cuando la proyección supera el 100 %. Un presupuesto normal descuenta los créditos y marcaría siempre USD 0.
 - **`fraudradar-cargo-real`** incluye créditos e impuestos y avisa si lo que iría a la tarjeta supera USD 1. Puede saltar por el IVA, porque los créditos no cubren impuestos.
+
+### Bucket de S3
+
+Un solo bucket con prefijos `landing/`, `lake/` (Bronze, Silver y Gold), `checkpoints/` y `athena-results/` (los resultados se borran a los 30 días). Tiene bloqueo de acceso público, cifrado SSE-S3 y solo acepta HTTPS.
+
+Tiene `DeletionPolicy: Retain`: si se borra el stack, el bucket y sus datos **se conservan**. Para eliminarlo del todo al final del proyecto hay que vaciarlo y borrarlo a mano:
+
+```bash
+aws s3 rb s3://fraudradar-<cuenta>-us-east-2 --force --profile fraudradar
+```
+
+Prueba de lectura y escritura:
+
+```bash
+aws s3 cp .env.example s3://fraudradar-<cuenta>-us-east-2/landing/prueba.txt --profile fraudradar
+aws s3 ls s3://fraudradar-<cuenta>-us-east-2/landing/ --profile fraudradar
+aws s3 rm s3://fraudradar-<cuenta>-us-east-2/landing/prueba.txt --profile fraudradar
+```
 
