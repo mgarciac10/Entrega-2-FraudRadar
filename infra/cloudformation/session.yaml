@@ -177,6 +177,9 @@ Resources:
       IamInstanceProfile: !Ref InstanceProfile
       MetadataOptions:
         HttpTokens: required
+        # 2 saltos: los contenedores Docker están un salto detrás del host. Con 1 no pueden obtener
+        # las credenciales del rol de la instancia (Spark no leería S3 ni DynamoDB).
+        HttpPutResponseHopLimit: 2
       NetworkInterfaces:
         - DeviceIndex: "0"
           SubnetId: !Select [0, !Ref SubnetIds]
@@ -214,6 +217,9 @@ Resources:
       IamInstanceProfile: !Ref InstanceProfile
       MetadataOptions:
         HttpTokens: required
+        # 2 saltos: los contenedores Docker están un salto detrás del host. Con 1 no pueden obtener
+        # las credenciales del rol de la instancia (Spark no leería S3 ni DynamoDB).
+        HttpPutResponseHopLimit: 2
       NetworkInterfaces:
         - DeviceIndex: "0"
           SubnetId: !Select [0, !Ref SubnetIds]

@@ -21,3 +21,20 @@ Jobs de Spark 3.5 con Delta Lake. Corren en contenedores sobre EC2.
 ## common/
 
 Esquemas (evento JSON, Silver, alerta) y configuración compartida. Los esquemas son el contrato entre integrantes: cambiarlos requiere avisar al equipo.
+
+## Cómo trabajar un job (patrón de `ingest_catalogs`)
+
+- **Sesión y rutas:** todo job usa `spark_session.get_spark()` y `lake_path()`. Las ubicaciones salen de `LAKE_URI`, `LANDING_URI` y `CHECKPOINT_URI` (o de `S3_BUCKET`), así el mismo código corre en AWS (`s3a://...`) y en local (`/data/...`).
+- **Imagen:** `spark/Dockerfile` trae Spark 3.5.3, Delta 3.2.1, S3A y el conector de Kafka ya descargados. El código se monta (no se copia): editar un job no obliga a reconstruir.
+- **Clúster local:** `docker compose --profile spark up -d --build` (master + worker; UI en http://localhost:8080). Los jobs se lanzan con `spark-submit --master spark://spark-master:7077`. Probado con `ingest_catalogs`: la aplicación termina `FINISHED` y escribe las 4 tablas Delta.
+- **Prueba de un job:** `tests/run_spark_checks.sh` (ejemplo para `ingest_catalogs`: filas, linaje, tipos, idempotencia). Cada job nuevo debería traer su verificación equivalente.
+- **Idempotencia:** `ingest_catalogs` usa `replaceWhere` por `_run_id`: un reintento de Airflow reemplaza solo su corrida. Los jobs de streaming se apoyan en el checkpoint, y los de Silver y Gold en `MERGE`.
+
+### Trampas conocidas
+
+- **Git Bash en Windows convierte rutas:** `/opt/spark/...` y variables como `LAKE_URI=/data/lake` se vuelven `C:/Program Files/Git/...`. Hay que activar `MSYS_NO_PATHCONV=1` antes de `docker compose up` **y** de `exec`: las variables se fijan al crear los contenedores, así que si se exportaron sin la bandera hay que recrearlos. El síntoma es `No FileSystem for scheme "C"`.
+- **Delta en disco local** falla con `ChecksumException` si se usa el sistema de archivos local por defecto; `get_spark()` ya fija `RawLocalFileSystem`. En S3 no aplica.
+- **Credenciales en la EC2:** vienen del rol de la instancia. Los contenedores están un salto detrás del host, así que la plantilla de la sesión fija `HttpPutResponseHopLimit: 2`; con el valor por defecto (1) Spark no leería S3 ni DynamoDB. **Esto aún no se probó en una EC2 real.**
+- **Checkpoints de streaming:** al recrear MSK los offsets del checkpoint ya no existen. Usar una ruta de checkpoint nueva por sesión.
+- **Memoria del worker:** por defecto 10 GB (pensado para la EC2 de 16 GB). En un portátil, `SPARK_WORKER_MEMORY=2g SPARK_WORKER_CORES=2`.
+

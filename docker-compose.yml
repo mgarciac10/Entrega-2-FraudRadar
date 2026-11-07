@@ -4,13 +4,23 @@
 # Perfiles:
 #   local     desarrollo sin AWS: Kafka propio (KRaft) + creación del topic
 #   producer  el productor sintético (en AWS corre en la EC2 t3.medium, contra MSK)
-#   spark     (pendiente) spark-master, spark-worker, ingest-bronze, detect-fraud
+#   spark     spark-master y spark-worker (clúster standalone). Los jobs se lanzan con spark-submit
+#             contra spark://spark-master:7077. Pendiente: servicios de los jobs de streaming
+#             (ingest-bronze, detect-fraud, con restart: always), que agregan sus responsables.
 #   airflow   (pendiente) postgres, scheduler y webserver
 #
 # Desarrollo local (Kafka propio y productor):
 #   docker compose --profile local --profile producer up --build
 # En AWS (contra MSK; KAFKA_BOOTSTRAP_SERVERS y KAFKA_SECURITY_PROTOCOL=SSL en el .env):
 #   docker compose --profile producer up --build
+# Spark (clúster) y un job de ejemplo. En Git Bash (Windows) hay que activar MSYS_NO_PATHCONV=1:
+# sin eso convierte "/opt/..." y "LAKE_URI=/data/lake" en "C:/Program Files/Git/...".
+#   export MSYS_NO_PATHCONV=1 LANDING_URI=/data/catalogs LAKE_URI=/data/lake
+#   docker compose --profile spark up -d --build
+#   docker compose --profile spark exec -T spark-master /opt/spark/bin/spark-submit
+#     --master spark://spark-master:7077 /opt/fraudradar/spark/batch/ingest_catalogs.py
+#   (el comando de exec va en una sola línea)
+#   UI del master: http://localhost:8080
 #
 # MSK, S3, DynamoDB, Lambda, SNS, Glue y Athena son servicios gestionados: se crean desde infra/.
 
@@ -72,3 +82,50 @@ services:
     volumes:
       - ./data:/app/data:ro # catálogos generados con producer/generate_catalogs.py
     restart: unless-stopped
+
+  # --- Spark (clúster standalone) ----------------------------------------
+  # El código se monta en /opt/fraudradar/spark: editar un job no requiere reconstruir la imagen.
+  # En AWS las credenciales de S3 y DynamoDB vienen del rol de la EC2; en local, pasa las variables
+  # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN.
+  spark-master:
+    profiles: ["spark"]
+    build:
+      context: .
+      dockerfile: spark/Dockerfile
+    image: fraudradar-spark
+    hostname: spark-master
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    ports:
+      - "8080:8080" # UI del master
+      - "7077:7077"
+    environment: &spark-env
+      SPARK_MASTER_HOST: spark-master
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+      S3_BUCKET: ${S3_BUCKET:-}
+      LAKE_URI: ${LAKE_URI:-}
+      LANDING_URI: ${LANDING_URI:-}
+      CHECKPOINT_URI: ${CHECKPOINT_URI:-}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_SECURITY_PROTOCOL: ${KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-transactions}
+      # Sin valor: se pasan solo si existen en tu entorno. Una cadena vacía estorbaría a la cadena de
+      # credenciales de AWS, que en la EC2 debe caer al rol de la instancia.
+      AWS_ACCESS_KEY_ID:
+      AWS_SECRET_ACCESS_KEY:
+      AWS_SESSION_TOKEN:
+    volumes: &spark-volumes
+      - ./spark:/opt/fraudradar/spark:ro
+      - ./data:/data
+
+  spark-worker:
+    profiles: ["spark"]
+    image: fraudradar-spark
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    depends_on:
+      - spark-master
+    environment:
+      <<: *spark-env
+      # La t3.xlarge tiene 4 vCPU y 16 GB: se reserva memoria para el sistema y el master.
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-3}
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-10g}
+    volumes: *spark-volumes
