@@ -61,7 +61,7 @@ Levanta Kafka en modo KRaft, crea el topic `transactions` (6 particiones) y arra
 docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic transactions --from-beginning --max-messages 5
 ```
 
-**En AWS (contra MSK):** en la EC2 de la aplicación, con el repositorio clonado y el `.env` con `KAFKA_BOOTSTRAP_SERVERS` (los brokers TLS de MSK) y `KAFKA_SECURITY_PROTOCOL=SSL`. El topic hay que crearlo antes (MSK tiene `auto.create.topics.enable=false`). Pendiente de probar.
+**En AWS (contra MSK):** en la EC2 de la aplicación, con el repositorio clonado y el `.env` con `KAFKA_BOOTSTRAP_SERVERS` (los brokers TLS de MSK) y `KAFKA_SECURITY_PROTOCOL=SSL`. El topic hay que crearlo antes (MSK tiene `auto.create.topics.enable=false`). Se opera con `bash infra/scripts/producer_aws.sh push|topic|start|check|stop` (ver `infra/README.md`). **Probado** contra MSK real: 20 ev/s estables, 0 errores, mensajes repartidos entre las 6 particiones.
 
 ## Tasa y correo
 

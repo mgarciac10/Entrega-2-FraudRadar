@@ -139,3 +139,22 @@ Decisiones de seguridad y operación:
 - **IMDSv2 obligatorio** en las EC2.
 - **Los checkpoints de Spark** deben usar una ruta nueva por sesión, porque el clúster de MSK nuevo no conserva offsets (ADR-01).
 
+### Operar el productor en AWS
+
+El código llega a la EC2 por S3 y se ejecuta por SSM: no hace falta GitHub, SSH ni hacer commit antes (sube lo que haya en tu carpeta). Queda en `/opt/fraudradar`.
+
+```bash
+bash infra/scripts/producer_aws.sh push          # envía el código a la EC2
+bash infra/scripts/producer_aws.sh topic         # crea el topic transactions en MSK
+bash infra/scripts/producer_aws.sh start 20      # catálogos + productor a 20 ev/s
+bash infra/scripts/producer_aws.sh check         # ¿están llegando los mensajes?
+bash infra/scripts/producer_aws.sh stop          # detiene el productor
+```
+
+- `infra/scripts/lib.sh` reúne lo común (cargar el `.env`, `run_remote` por SSM). `infra/remote/` contiene los scripts que corren **en la EC2**.
+- El topic se crea con **6 particiones y RF 2**; hereda `min.insync.replicas=2` y `unclean.leader.election.enable=false` de la configuración de MSK. `describe` lo confirma.
+- `check` muestra los mensajes por partición, el total y dos mensajes de ejemplo leídos de MSK.
+- Los catálogos se generan en la EC2 con `--users` = tasa × 600 (mínimo 100.000).
+- **Acordarse de detener el productor antes de apagar el stack no es necesario**, pero un productor encendido llena el disco de los brokers (10 GiB): a 20 ev/s son ~0,8 GB por día.
+- Si la CLI imprime `charmap codec can't encode`, es la salida Unicode de `docker build`: `lib.sh` ya fuerza UTF-8.
+

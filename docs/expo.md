@@ -20,6 +20,7 @@ Estructura sugerida por la guía: problema (1-2) · arquitectura (3-4) · decisi
 - **Hallazgo: el universo de usuarios debe crecer con la tasa.** Con 500 usuarios a 50 ev/s hay más de 1.000 ráfagas por puro azar (probado). Regla: usuarios ≥ tasa × 600.
 - **Falsos positivos naturales:** el tráfico normal dispara monto atípico en el 0,18 % de los eventos. Es lo que alimenta la pregunta 7.
 - **Productor idempotente** (`acks=all`): los reintentos no duplican eventos en Kafka.
+- **Validado en MSK real:** topic con 6 particiones, RF 2, `min.insync.replicas=2`. La llave `user_id` mantiene en orden los eventos de cada usuario; con 717 mensajes el reparto fue de 108 a 142 por partición.
 
 ## 3. Decisiones que cambiaron frente al E1 (y por qué)
 
