@@ -28,7 +28,8 @@ Spark 3.5 Structured Streaming con trigger de 15 s, en dos jobs continuos que le
 Sobre el diseño de `detect_fraud`:
 - Lee de MSK y no de Bronze, para no sumar la latencia de commit de Bronze a la del camino caliente.
 - Emite en modo update: dispara la alerta apenas una ventana supera el umbral, sin esperar a que cierre.
-- No lee el campo `is_fraud_injected`. Ese campo solo existe para evaluar las reglas en Gold.
+- No lee `is_fraud_injected` ni `attack_id`. Esos campos solo existen para evaluar las reglas en Gold.
+- Registra en cada alerta `trigger_event_ts`: el `event_ts` de la transacción que hizo saltar la regla.
 
 **Silver se construye en batch.** `bronze_to_silver` usa la misma API con `trigger(availableNow=True)`: procesa lo nuevo de Bronze desde su checkpoint y termina. Mantiene exactly-once y lo dispara Airflow cada 15 min. La misma API de DataFrames sirve para streaming y batch, y el código corre igual en local (docker-compose) y en EC2.
 

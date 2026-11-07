@@ -23,8 +23,8 @@ Gold es una **constelación**: dos tablas de hechos que comparten dimensiones co
 
 | Hecho | Grano | Llaves | Medidas y atributos |
 |---|---|---|---|
-| `fact_transaction` | una transacción | fecha, hora, usuario, comercio, ubicación, canal | `amount_cop`, `is_flagged`, `is_fraud_injected` |
-| `fact_alert` | una alerta | fecha, hora, usuario, regla, ubicación | `amount_at_risk_cop`, `n_transactions`, `detection_latency_s`. Dimensión degenerada: `status` |
+| `fact_transaction` | una transacción | fecha, hora, usuario, comercio, ubicación, canal | `amount_cop`, `is_flagged`, `is_fraud_injected`, `attack_id` |
+| `fact_alert` | una alerta | fecha, hora, usuario, regla, ubicación | `amount_at_risk_cop`, `n_transactions`, `detection_latency_s`, `trigger_event_ts`. Dimensión degenerada: `status` |
 
 **Dimensiones:** `dim_date`, `dim_time`, `dim_user`, `dim_merchant`, `dim_location`, `dim_channel` y `dim_rule`. Las compartidas son fecha, hora, usuario y ubicación.
 
@@ -33,7 +33,9 @@ Gold es una **constelación**: dos tablas de hechos que comparten dimensiones co
 - El estado de cada alerta se lee de DynamoDB.
 - `fact_transaction` se particiona por fecha.
 
-**Con `is_fraud_injected`**, Gold calcula la precisión y el recall de cada regla, cruzando las transacciones marcadas por el productor con las alertadas.
+**Con `is_fraud_injected` y `attack_id`**, Gold calcula:
+- La precisión y el recall de cada regla, cruzando las transacciones marcadas por el productor con las alertadas.
+- El **fraude evitable**: de cada ataque, el monto posterior a la primera alerta (`trigger_event_ts`). Es la métrica de valor del proyecto, porque FraudRadar no detiene la primera transacción de un ataque pero sí corta los pasos siguientes (query Q8).
 
 ## Consecuencias
 
@@ -47,7 +49,7 @@ Gold es una **constelación**: dos tablas de hechos que comparten dimensiones co
 ## Cambio respecto al E1
 
 - `fact_alert` gana la llave `time_key`. Sin ella, la pregunta 5 (franja horaria) no se podía responder.
-- `fact_transaction` gana `is_fraud_injected`, una decisión del equipo tomada a partir del estado del arte.
+- `fact_transaction` gana `is_fraud_injected` y `attack_id`, y `fact_alert` gana `trigger_event_ts`: decisiones del equipo tomadas a partir del estado del arte para medir precisión, recall y fraude evitable.
 - El estado de las alertas viene de DynamoDB en lugar de MongoDB (ADR-04).
 
 ## Fuentes

@@ -34,7 +34,11 @@ Varios patrones de fraude **solo existen como secuencia**: una ráfaga de transf
 
 Se mantiene la meta de **p95 < 2 minutos** (RNF-04), presentada como sistema de monitoreo posterior y no de prevención. Con trigger de 15 s, la latencia real debería ser bastante menor; se mide en la demo.
 
-**Limitación que hay que decir en la defensa:** FraudRadar no detiene una única transferencia grande fraudulenta. Para eso hace falta la capa 1, que queda como trabajo futuro.
+**Limitación que hay que decir en la defensa:** FraudRadar no detiene la primera transacción de un ataque ni una única transferencia grande fraudulenta. Para eso hace falta la capa 1, que queda como trabajo futuro.
+
+**Cómo se demuestra el valor.** Con `is_fraud_injected` y `attack_id`, Gold mide por ataque cuánto monto fraudulento ocurrió antes de la primera alerta (no evitable) y cuánto después (evitable si el analista reacciona), y lo compara con el escenario actual de reporte diario (query Q8). Así el valor se mide y no solo se afirma.
+
+Frase para la defensa: "FraudRadar no autoriza ni bloquea: es la capa de monitoreo posterior. No evita la primera transacción de un ataque, pero corta los pasos siguientes y da tiempo de congelar fondos. Frente al reporte diario que hoy tiene PagaYa, reduce la ventana de pérdida de horas a minutos, y lo medimos con Q8."
 
 ## 2. Falsos positivos y falsos negativos
 
@@ -113,7 +117,7 @@ Trabajo futuro: entrenar un modelo con esas features y etiquetas (por ejemplo co
 | # | Implicación | Estado |
 |---|---|---|
 | 1 | Presentar FraudRadar como monitoreo posterior (capa 2) y la calificación en línea como trabajo futuro | Aplicar en la presentación y en el ADR-02 |
-| 2 | Agregar `is_fraud_injected` al evento y a `fact_transaction` para medir precisión y recall por regla Aprobado: aplicar en `producer.py`, `spark/common/` y `silver_to_gold` |
+| 2 | Agregar `is_fraud_injected` y `attack_id` al evento y a `fact_transaction`, y `trigger_event_ts` a `fact_alert`, para medir precisión, recall y fraude evitable | Aprobado: aplicar en `producer.py`, `spark/common/` y `silver_to_gold` |
 | 3 | Umbrales de las reglas como configuración, no en el código | Aplicar en `detect_fraud` |
 | 4 | Machine learning como trabajo futuro, con AutoGluon/SageMaker como ruta de AWS | Documentar en el ADR correspondiente |
 | 5 | Medir en la demo la latencia real evento → alerta (p50 y p95) | Ya está en RNF-04 |

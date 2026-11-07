@@ -16,7 +16,7 @@ Jobs de Spark 3.5 con Delta Lake. Corren en contenedores sobre EC2.
 | `ingest_catalogs.py` | Mateo García | diario | CSV de `landing/` → `bronze.catalogs` |
 | `bronze_to_silver.py` | Juan José Gómez | 15 min | Lectura incremental de Bronze (`trigger(availableNow=True)`), valida esquema, deduplica con MERGE, enriquece con usuario y comercio, rechazados a `silver.transactions_rejected` |
 | `build_user_profile.py` | Juan José Vargas | diario | Promedio y número de transacciones de los últimos 30 días por usuario → `silver.user_profile` |
-| `silver_to_gold.py` | Luis Moreno | 15 min | Dimensiones y MERGE de `fact_transaction` (con `is_fraud_injected`) y `fact_alert` (estado de alertas leído de DynamoDB) |
+| `silver_to_gold.py` | Luis Moreno | 15 min | Dimensiones y MERGE de `fact_transaction` (con `is_fraud_injected` y `attack_id`) y `fact_alert` (con `trigger_event_ts`; estado de alertas leído de DynamoDB) |
 
 ## common/
 

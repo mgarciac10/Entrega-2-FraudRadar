@@ -16,4 +16,9 @@ Recursos:
 | Glue + Athena | base de datos `fraudradar` y bucket de resultados |
 | AWS Budgets | alertas al 50 % y 80 % del crédito |
 
-Herramienta (CloudFormation, Terraform o scripts de AWS CLI): por definir.
+Herramienta: **AWS CloudFormation**. El estado vive en AWS, así que cualquier integrante puede borrar un stack desde la consola si alguien olvida apagar. Se usan dos stacks:
+
+- **Persistente:** S3, DynamoDB, SNS, Lambda, Glue, Budgets e IAM. Se crea una vez.
+- **Por sesión:** MSK y las EC2. Se crea al empezar a trabajar y se borra al terminar.
+
+Perfil de AWS CLI del proyecto: `fraudradar` (región `us-east-1`).
