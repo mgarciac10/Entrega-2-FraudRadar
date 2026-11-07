@@ -2,7 +2,8 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   FraudRadar - stack persistente. Recursos que se crean una vez y casi no
   cuestan cuando el pipeline está apagado. Se construye por partes:
-  1) presupuestos de costo, 2) bucket de S3 del lakehouse.
+  1) presupuestos de costo, 2) bucket de S3 del lakehouse,
+  3) tabla DynamoDB de alertas.
 
 Parameters:
   NotificationEmail:
@@ -50,6 +51,39 @@ Resources:
             Status: Enabled
             Prefix: athena-results/
             ExpirationInDays: 30
+
+  # Alertas de fraude (ADR-04). La llave alert_id es determinística
+  # (hash de user_id, regla e inicio de ventana): la escritura condicional
+  # attribute_not_exists(alert_id) hace idempotente la salida de detect_fraud.
+  # El hash reparte las escrituras de forma uniforme entre particiones.
+  FraudAlertsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: fraud_alerts
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: alert_id
+          AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+      KeySchema:
+        - AttributeName: alert_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        # Consulta del analista: alertas abiertas de un usuario.
+        - IndexName: user_id-status-index
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+            - AttributeName: status
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      # La Lambda notify_alert reacciona a los INSERT (alertas nuevas).
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
 
   # Solo se permite acceso por HTTPS.
   LakeBucketPolicy:
@@ -163,6 +197,10 @@ Resources:
 Outputs:
   LakeBucketName:
     Value: !Ref LakeBucket
+  FraudAlertsTableName:
+    Value: !Ref FraudAlertsTable
+  FraudAlertsStreamArn:
+    Value: !GetAtt FraudAlertsTable.StreamArn
   CreditConsumptionBudgetName:
     Value: fraudradar-consumo-credito
   RealChargeBudgetName:

@@ -1,0 +1,12 @@
+{
+  "alert_id": {"S": "test-alert-0001"},
+  "user_id": {"S": "u-test"},
+  "rule": {"S": "rafaga"},
+  "window_start": {"S": "2026-11-06T10:00:00Z"},
+  "status": {"S": "abierta"},
+  "amount_at_risk_cop": {"N": "350000"},
+  "transaction_ids": {"L": [{"S": "t-1"}, {"S": "t-2"}, {"S": "t-3"}]},
+  "trigger_event_ts": {"S": "2026-11-06T10:03:12Z"},
+  "created_at": {"S": "2026-11-06T10:03:14Z"},
+  "evidence": {"M": {"n_transactions": {"N": "6"}, "window_minutes": {"N": "5"}}}
+}

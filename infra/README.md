@@ -44,6 +44,7 @@ Se construye por partes, una por commit:
 |---|---|---|
 | 1 | Presupuestos `fraudradar-consumo-credito` y `fraudradar-cargo-real` | `aws budgets describe-budgets --account-id <cuenta> --profile fraudradar` |
 | 2 | Bucket `fraudradar-<cuenta>-us-east-2` | Escribir, leer y borrar un objeto de prueba (ver abajo) |
+| 3 | Tabla DynamoDB `fraud_alerts` con Streams | `bash infra/scripts/test_dynamodb.sh` |
 
 Los presupuestos:
 
@@ -67,4 +68,13 @@ aws s3 cp .env.example s3://fraudradar-<cuenta>-us-east-2/landing/prueba.txt --p
 aws s3 ls s3://fraudradar-<cuenta>-us-east-2/landing/ --profile fraudradar
 aws s3 rm s3://fraudradar-<cuenta>-us-east-2/landing/prueba.txt --profile fraudradar
 ```
+
+### Tabla `fraud_alerts`
+
+- **Llave:** `alert_id` (hash de usuario, regla e inicio de ventana). Reparte las escrituras de forma uniforme y hace que la misma alerta siempre tenga el mismo id.
+- **Modo:** on-demand (se paga por solicitud; sin costo fijo).
+- **Índice global `user_id-status-index`:** consulta del analista ("alertas abiertas de este usuario"). Es eventualmente consistente.
+- **Streams `NEW_IMAGE`:** alimenta la Lambda `notify_alert`, que avisa solo de los INSERT.
+
+`bash infra/scripts/test_dynamodb.sh` verifica cuatro cosas: la primera escritura condicional crea la alerta, reescribirla es rechazado (idempotencia), el índice la encuentra y Streams está activado. Deja la tabla vacía al terminar.
 
