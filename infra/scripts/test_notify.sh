@@ -25,9 +25,12 @@ trap cleanup EXIT
 cleanup
 
 # Cuenta cuántos avisos registró la Lambda desde el instante $1 (milisegundos).
+# - MSYS_NO_PATHCONV evita que Git Bash convierta "/aws/lambda/..." en una ruta de Windows.
+# - Se cuentan ocurrencias en el texto y no con length(events): la CLI pagina y
+#   calcularía un número por página. Los errores de la CLI no se ocultan.
 sent_since() {
-  "${AWS[@]}" logs filter-log-events --log-group-name "$LOG_GROUP" --start-time "$1" \
-    --filter-pattern alerta_enviada --query "length(events)" --output text 2>/dev/null || echo 0
+  MSYS_NO_PATHCONV=1 "${AWS[@]}" logs filter-log-events --log-group-name "$LOG_GROUP" --start-time "$1" \
+    --filter-pattern alerta_enviada --query "events[].message" --output text | grep -o alerta_enviada | wc -l | tr -d ' '
 }
 
 # Espera hasta 45 s a que el conteo llegue a $2 desde $1.

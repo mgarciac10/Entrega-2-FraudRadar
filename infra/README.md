@@ -90,6 +90,12 @@ Flujo: DynamoDB Streams → Lambda → topic SNS `fraud-alerts` → correo del a
 - **Sin cola de mensajes fallidos (DLQ):** si un registro falla las 3 veces, se descarta y queda el error en CloudWatch (14 días). Agregar una DLQ queda como mejora.
 - **Dos correos distintos:** `BUDGET_EMAIL` (dueño de la cuenta, avisos de costo) y `ALERT_EMAIL` (analista, alertas de fraude). Cambiar `BUDGET_EMAIL` obliga a CloudFormation a reemplazar los presupuestos y falla por el nombre fijo; `ALERT_EMAIL` se puede cambiar sin problema (la suscripción nueva debe confirmarse). Hay que **confirmar la suscripción** con el enlace del correo "AWS Notification - Subscription Confirmation"; sin eso SNS no entrega nada.
 
+Trampas conocidas de Git Bash en Windows al escribir scripts con la CLI de AWS:
+
+- **Conversión de rutas:** un argumento que empieza por `/` (por ejemplo, el log group `/aws/lambda/...`) se reescribe como `C:/Program Files/Git/...`. Se evita anteponiendo `MSYS_NO_PATHCONV=1` a ese comando.
+- **Paginación:** con `--query` la CLI evalúa la consulta por página, así que `length(events)` devuelve un número por página. Para contar, se cuentan ocurrencias en el texto.
+- **No ocultar errores** (`2>/dev/null`) en las pruebas: un error silenciado se ve como "0 resultados".
+
 Pruebas:
 
 ```bash
