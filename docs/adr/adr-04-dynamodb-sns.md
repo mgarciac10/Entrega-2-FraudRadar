@@ -29,7 +29,7 @@
 ### Almacenamiento: tabla DynamoDB `fraud_alerts` en modo on-demand
 
 - **Llave primaria:** `alert_id = hash(user_id, regla, inicio de ventana)`. Es determinística: la misma alerta siempre produce el mismo `alert_id`.
-- **Atributos:** `user_id`, `rule`, `window_start`, `evidence` (mapa con estructura distinta por regla), `transaction_ids`, `amount_at_risk_cop`, `status`, `event_ts` y `created_at`.
+- **Atributos:** `user_id`, `rule`, `window_start`, `evidence` (mapa con estructura distinta por regla), `transaction_ids`, `amount_at_risk_cop`, `status`, `trigger_event_ts` y `created_at`.
 - **Escritura condicional** (`attribute_not_exists(alert_id)`): la primera escritura crea la alerta. Las reemisiones de la misma ventana fallan la condición y se ignoran. El resultado es exactly-once efectivo en la tabla.
 - **Índice secundario global** `user_id` + `status`, para la consulta del analista ("alertas abiertas de este usuario").
 

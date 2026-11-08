@@ -43,6 +43,7 @@ Sirven como respuesta a "¿qué problemas tuvieron?"; cada una enseñó algo de 
 - **Reemplazo de presupuestos:** cambiar el correo de un recurso con nombre fijo en CloudFormation obliga a reemplazarlo y falla. Se separaron los correos de costos y de alertas.
 - **Configuración CP vs. recomendación de AWS:** RF 2 con `min.insync.replicas` 2 bloquea escrituras mientras MSK parcha un broker. Es una elección consciente (preferimos bloquear antes que perder o duplicar), pero va contra la guía de alta disponibilidad de AWS. Producción usaría 3 brokers.
 - **Los offsets de Kafka no son una llave única:** cada MSK nuevo los reinicia en 0. Bronze guarda `_session`, y el linaje de un evento es `(_session, partición, offset)`.
+- **Una ráfaga disparaba la regla varias veces:** una ráfaga de 12 transacciones cumple "más de 5 en 5 min" desde la 6.ª, o sea 7 disparos = 7 alertas y 7 correos de un solo ataque. Se resolvió con **episodios**: el primer disparo fija el inicio de la ventana y los siguientes comparten el mismo `alert_id`. Una libreta por usuario con estado (`applyInPandasWithState`) en vez de ventanas de agregación, porque coincide con la especificación y el viaje imposible compara con la transacción anterior.
 - **Correos duplicados posibles:** Lambda entrega los eventos de DynamoDB Streams al menos una vez; el registro es exacto pero un correo podría repetirse. Aceptado y documentado.
 
 ## 5. Costo y operación
