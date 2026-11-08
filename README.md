@@ -60,7 +60,7 @@ Cada PR lo aprueba el par de defensa de quien lo abre.
 
 ## Cómo correr el pipeline desde cero
 
-> **Estado:** hoy funcionan la infraestructura, el productor, el aviso por correo, la carga de catálogos, `ingest_bronze` (Kafka → Bronze) y `bronze_to_silver`, `build_user_profile` y `detect_fraud` (de estos dos, la lógica está probada con Spark local; falta correrlos con Delta en Docker y en AWS). Faltan Gold, Athena y Airflow; cada paso de abajo dice si ya existe.
+> **Estado:** hoy funcionan la infraestructura, el productor, el aviso por correo, la carga de catálogos, `ingest_bronze` (Kafka → Bronze) y `bronze_to_silver`, `build_user_profile` y `detect_fraud` (de estos dos, probados en local con Docker, Kafka y Delta; falta AWS). Faltan Gold, Athena y Airflow; cada paso de abajo dice si ya existe.
 
 ### 1. Requisitos
 
