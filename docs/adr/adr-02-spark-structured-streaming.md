@@ -30,13 +30,17 @@ Sobre el diseño de `detect_fraud`:
 - Emite en modo update: dispara la alerta apenas una ventana supera el umbral, sin esperar a que cierre.
 - No lee `is_fraud_injected` ni `attack_id`. Esos campos solo existen para evaluar las reglas en Gold.
 - Registra en cada alerta `trigger_event_ts`: el `event_ts` de la transacción que hizo saltar la regla.
+- **Las reglas se evalúan con un operador con estado por usuario** (`applyInPandasWithState`; la lógica está en `spark/streaming/fraud_rules.py`). Cada usuario tiene una "libreta" con sus transacciones de los últimos 30 min y cada transacción nueva se evalúa contra ella, igual que `tests/reference_rules.py`. Se prefirió a ventanas de agregación por dos razones: coincide exactamente con la especificación (una ventana deslizante agregada da cortes distintos) y el viaje imposible compara con la transacción *anterior* del usuario, lo que no es una agregación.
+- **Un ataque es un solo episodio.** En ráfaga y monto acumulado, la regla se sigue cumpliendo en cada transacción nueva mientras la ventana siga caliente (una ráfaga de 12 transacciones la dispara 7 veces). El primer disparo abre el episodio y fija `window_start`; los siguientes lo reutilizan, así que `alert_id` es el mismo y no se generan 7 alertas ni 7 correos. El episodio termina cuando la regla deja de cumplirse.
 
 **Silver se construye en batch.** `bronze_to_silver` usa la misma API con `trigger(availableNow=True)`: procesa lo nuevo de Bronze desde su checkpoint y termina. Mantiene exactly-once y lo dispara Airflow cada 15 min. La misma API de DataFrames sirve para streaming y batch, y el código corre igual en local (docker-compose) y en EC2.
 
 ## Consecuencias
 
 - **Latencia mínima.** Es del orden del trigger (segundos). Se mide en la demo, y debería quedar bastante por debajo de 2 min.
-- **Eventos tardíos.** Los que llegan con más de 10 min de retraso quedan en Bronze pero no entran a las ventanas de detección.
+- **Eventos tardíos.** Los que llegan con más de 10 min de retraso quedan en Bronze pero no entran a las ventanas de detección. Los que llegan tarde pero dentro del watermark se evalúan, aunque no vuelven a disparar ventanas que ya se evaluaron sin ellos.
+- **Estado en Python.** `applyInPandasWithState` serializa a pandas/Arrow (la imagen incluye `pandas` y `pyarrow`) y es más lento que las ventanas nativas. Si el pico de 3.000 ev/s no cupiera en el lab, la alternativa es reescribir la libreta en Scala o con ventanas nativas; se mide con RNF-01.
+- **Viaje imposible sin distancia.** La evidencia guarda las dos ciudades y los minutos entre ellas; no calcula la distancia (la regla de referencia no la usa).
 - **Emisiones repetidas.** En modo update una misma ventana puede emitirse varias veces. Por eso la escritura de alertas tiene que ser idempotente (ADR-04).
 - **Doble lectura del topic.** Los dos jobs leen el mismo topic con grupos de consumidores distintos. La carga sobre MSK es baja con este volumen.
 - **Validación mínima en `detect_fraud`.** Como no lee Silver, aplica su propia deduplicación y validación de esquema. El esquema se comparte desde `spark/common/` para no duplicar lógica.

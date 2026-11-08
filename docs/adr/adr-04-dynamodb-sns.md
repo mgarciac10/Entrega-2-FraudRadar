@@ -29,7 +29,8 @@
 ### Almacenamiento: tabla DynamoDB `fraud_alerts` en modo on-demand
 
 - **Llave primaria:** `alert_id = hash(user_id, regla, inicio de ventana)`. Es determinística: la misma alerta siempre produce el mismo `alert_id`.
-- **Atributos:** `user_id`, `rule`, `window_start`, `evidence` (mapa con estructura distinta por regla), `transaction_ids`, `amount_at_risk_cop`, `status`, `event_ts` y `created_at`.
+- **Atributos:** `user_id`, `rule`, `window_start`, `evidence` (mapa con estructura distinta por regla), `transaction_ids`, `amount_at_risk_cop`, `status`, `trigger_event_ts` y `created_at`.
+- **Valores de `status`:** `abierta` (la deja `detect_fraud` al crear la alerta), `confirmada` (era fraude) y `descartada` (falso positivo). Al marcarla, el analista agrega `reviewed_at` y `reviewed_by`.
 - **Escritura condicional** (`attribute_not_exists(alert_id)`): la primera escritura crea la alerta. Las reemisiones de la misma ventana fallan la condición y se ignoran. El resultado es exactly-once efectivo en la tabla.
 - **Índice secundario global** `user_id` + `status`, para la consulta del analista ("alertas abiertas de este usuario").
 
@@ -40,7 +41,7 @@
 
 ### Feedback del analista
 
-El analista marca cada alerta como confirmada o descartada sobre DynamoDB (consola, PartiQL o un script de apoyo). `silver_to_gold` lee ese estado cada 15 min para `fact_alert`.
+El analista marca cada alerta como confirmada o descartada sobre DynamoDB (consola, PartiQL o `analyst/alertas.py`: `listar`, `abiertas`, `marcar` y `resumen`). `silver_to_gold` lee ese estado cada 15 min para `fact_alert`; solo necesita `status`, con los tres valores de arriba. Marcar una alerta es un cambio (MODIFY), no un INSERT, así que no envía otro correo.
 
 ### Posición CAP
 

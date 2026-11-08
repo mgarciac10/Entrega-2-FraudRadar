@@ -13,7 +13,7 @@ rm -rf data/test_spark
 python producer/generate_catalogs.py --users 2000 --merchants 100 --seed 3 --out data/test_spark/catalogs > /dev/null
 HERE="$(pwd -W 2>/dev/null || pwd)"
 
-for check in spark_check_ingest_catalogs spark_check_bronze_to_silver; do
+for check in spark_check_ingest_catalogs spark_check_bronze_to_silver spark_check_build_user_profile spark_check_detect_fraud; do
   rm -rf data/test_spark/lake data/test_spark/checkpoints
   echo "== $check"
   docker run --rm \

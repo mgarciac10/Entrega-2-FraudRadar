@@ -22,10 +22,12 @@ RUN set -eux; cd /opt/spark/jars; \
     get org/apache/kafka/kafka-clients/3.4.1/kafka-clients-3.4.1.jar; \
     get org/apache/commons/commons-pool2/2.11.1/commons-pool2-2.11.1.jar
 
-# API de Python de Delta (DeltaTable.merge) y boto3 (silver_to_gold lee el estado de las alertas en DynamoDB).
+# API de Python de Delta (DeltaTable.merge) y boto3 (detect_fraud escribe las alertas en DynamoDB y
+# silver_to_gold lee su estado). pandas y pyarrow los exige applyInPandasWithState (detect_fraud);
+# numpy<2 porque pyarrow 14 y Spark 3.5 no son compatibles con numpy 2.
 # PySpark ya viene con la imagen en /opt/spark/python.
 RUN python3 -m pip install --no-cache-dir --no-deps delta-spark==${DELTA} \
- && python3 -m pip install --no-cache-dir importlib-metadata boto3
+ && python3 -m pip install --no-cache-dir importlib-metadata boto3 "numpy==1.26.4" "pandas==2.1.4" "pyarrow==14.0.2"
 
 # El código se monta en /opt/fraudradar/spark (compose) o se copia aquí.
 ENV PYTHONPATH=/opt/fraudradar/spark/common:/opt/fraudradar/spark/batch:/opt/fraudradar/spark/streaming:${PYTHONPATH}
