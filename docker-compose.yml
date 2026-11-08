@@ -6,7 +6,7 @@
 #   producer  el productor sintético (en AWS corre en la EC2 t3.medium, contra MSK)
 #   spark     spark-master y spark-worker (clúster standalone). Los jobs se lanzan con spark-submit
 #             contra spark://spark-master:7077.
-#   streaming jobs continuos con restart: always (ingest-bronze; falta detect-fraud). Necesitan el
+#   streaming jobs continuos con restart: always (ingest-bronze y detect-fraud). Necesitan el
 #             perfil spark. STREAM_SESSION fija la carpeta del checkpoint (nueva por cada MSK).
 #   airflow   (pendiente) postgres, scheduler y webserver
 #
@@ -159,5 +159,39 @@ services:
     environment:
       <<: *spark-env
       STREAM_SESSION: ${STREAM_SESSION:-local}
+    volumes: *spark-volumes
+    restart: always
+
+  # Lee del topic y escribe las alertas en DynamoDB. Necesita silver/user_profile (build_user_profile):
+  # sin esa tabla el job falla al arrancar y restart: always lo reintenta. Para probar en local sin
+  # DynamoDB: ALERTS_SINK=console (imprime las alertas). Le deja a ingest-bronze y a los batch el resto
+  # del worker (3 núcleos): 1 para cada job de streaming.
+  detect-fraud:
+    profiles: ["streaming"]
+    image: fraudradar-spark
+    hostname: detect-fraud
+    depends_on:
+      spark-master:
+        condition: service_started
+      kafka-init:
+        condition: service_completed_successfully
+        required: false
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - spark://spark-master:7077
+      - --conf
+      - spark.driver.host=detect-fraud
+      - --conf
+      - spark.cores.max=1
+      - --executor-memory
+      - 1g
+      - /opt/fraudradar/spark/streaming/detect_fraud.py
+    environment:
+      <<: *spark-env
+      STREAM_SESSION: ${STREAM_SESSION:-local}
+      ALERTS_SINK: ${ALERTS_SINK:-dynamodb}
+      ALERTS_TABLE: ${ALERTS_TABLE:-fraud_alerts}
+      DYNAMODB_ENDPOINT_URL: ${DYNAMODB_ENDPOINT_URL:-}
     volumes: *spark-volumes
     restart: always
