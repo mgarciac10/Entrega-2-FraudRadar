@@ -13,10 +13,14 @@ rm -rf data/test_spark
 python producer/generate_catalogs.py --users 2000 --merchants 100 --seed 3 --out data/test_spark/catalogs > /dev/null
 HERE="$(pwd -W 2>/dev/null || pwd)"
 
-docker run --rm \
-  -v "$HERE/data/test_spark:/data" \
-  -v "$HERE/spark:/opt/fraudradar/spark:ro" \
-  -v "$HERE/tests:/opt/fraudradar/tests:ro" \
-  -e LANDING_URI=/data/catalogs -e LAKE_URI=/data/lake \
-  fraudradar-spark \
-  /opt/spark/bin/spark-submit --master "local[2]" /opt/fraudradar/tests/spark_check_ingest_catalogs.py
+for check in spark_check_ingest_catalogs spark_check_bronze_to_silver; do
+  rm -rf data/test_spark/lake data/test_spark/checkpoints
+  echo "== $check"
+  docker run --rm \
+    -v "$HERE/data/test_spark:/data" \
+    -v "$HERE/spark:/opt/fraudradar/spark:ro" \
+    -v "$HERE/tests:/opt/fraudradar/tests:ro" \
+    -e LANDING_URI=/data/catalogs -e LAKE_URI=/data/lake -e CHECKPOINT_URI=/data/checkpoints \
+    fraudradar-spark \
+    /opt/spark/bin/spark-submit --master "local[2]" "/opt/fraudradar/tests/$check.py"
+done
