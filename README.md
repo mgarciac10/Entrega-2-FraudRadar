@@ -27,6 +27,7 @@ Diagrama editable: [`docs/arquitectura/arquitectura.drawio`](docs/arquitectura/a
 ├── .env.example         variables de entorno; copiar a .env
 ├── infra/               crear y destruir la infraestructura AWS de cada sesión
 ├── producer/            productor sintético y generador de catálogos
+├── analyst/             herramienta del analista: listar y marcar alertas en DynamoDB
 ├── spark/
 │   ├── streaming/       ingest_bronze, detect_fraud
 │   ├── batch/           ingest_catalogs, bronze_to_silver, build_user_profile, silver_to_gold
@@ -59,7 +60,7 @@ Cada PR lo aprueba el par de defensa de quien lo abre.
 
 ## Cómo correr el pipeline desde cero
 
-> **Estado:** hoy funcionan la infraestructura, el productor, el aviso por correo, la carga de catálogos, `ingest_bronze` (Kafka → Bronze) y `bronze_to_silver` (probados en local, aún no en AWS). Faltan `detect_fraud`, Gold, Athena y Airflow; cada paso de abajo dice si ya existe.
+> **Estado:** hoy funcionan la infraestructura, el productor, el aviso por correo, la carga de catálogos, `ingest_bronze` (Kafka → Bronze) y `bronze_to_silver`, `build_user_profile` y `detect_fraud` (de estos dos, la lógica está probada con Spark local; falta correrlos con Delta en Docker y en AWS). Faltan Gold, Athena y Airflow; cada paso de abajo dice si ya existe.
 
 ### 1. Requisitos
 
@@ -98,9 +99,10 @@ Pipeline local hasta Silver. En Git Bash, con `MSYS_NO_PATHCONV=1` y en el `.env
 docker compose --profile local --profile producer --profile spark --profile streaming up -d --build
 docker compose --profile spark exec -T spark-master /opt/spark/bin/spark-submit --master spark://spark-master:7077 /opt/fraudradar/spark/batch/ingest_catalogs.py
 docker compose --profile spark exec -T spark-master /opt/spark/bin/spark-submit --master spark://spark-master:7077 /opt/fraudradar/spark/batch/bronze_to_silver.py
+docker compose --profile spark exec -T spark-master /opt/spark/bin/spark-submit --master spark://spark-master:7077 /opt/fraudradar/spark/batch/build_user_profile.py
 ```
 
-`ingest-bronze` corre continuo y escribe `lake/bronze/transactions` cada 15 s; `bronze_to_silver` procesa lo nuevo de Bronze y termina (en el pipeline lo dispara Airflow). Para comprobar que Bronze tiene exactamente lo que hay en Kafka, con el productor detenido, se corre `tests/spark_check_ingest_bronze.py` con `spark-submit --master local[2]`.
+`ingest-bronze` corre continuo y escribe `lake/bronze/transactions` cada 15 s; `bronze_to_silver` procesa lo nuevo de Bronze y termina (en el pipeline lo dispara Airflow). `detect-fraud` (también en el perfil `streaming`) necesita `silver/user_profile`: si no existe, se detiene con "corre build_user_profile antes" y `restart: always` lo reinicia en bucle. Orden de arranque: `ingest_catalogs` → productor e `ingest-bronze` → `bronze_to_silver` → `build_user_profile` → `detect-fraud`. Para probar sin DynamoDB, `ALERTS_SINK=console` en el `.env` y `docker compose logs -f detect-fraud`. Para comprobar que Bronze tiene exactamente lo que hay en Kafka, con el productor detenido, se corre `tests/spark_check_ingest_bronze.py` con `spark-submit --master local[2]`.
 
 ### 5. Sesión en AWS (cobra por hora: MSK y 2 EC2)
 
@@ -117,7 +119,7 @@ bash infra/scripts/producer_aws.sh check         # verifica que los mensajes lle
 
 ### 6. Lo que falta
 
-`detect_fraud` (streaming), `build_user_profile`, `silver_to_gold`, las consultas de Athena y los DAGs de Airflow. Cuando existan se agregan a este README, y a `docker-compose.yml` el servicio `detect-fraud` (perfil `streaming`, como `ingest-bronze`). En AWS falta probar `ingest_bronze` contra MSK y S3, con un `STREAM_SESSION` nuevo y `KAFKA_SECURITY_PROTOCOL=SSL`.
+`silver_to_gold`, las consultas de Athena y los DAGs de Airflow; cuando existan se agregan a este README. En AWS falta probar `ingest_bronze` y `detect_fraud` contra MSK, S3 y DynamoDB, con un `STREAM_SESSION` nuevo y `KAFKA_SECURITY_PROTOCOL=SSL`.
 
 ## Checklist del Entregable 2
 

@@ -18,6 +18,13 @@ Jobs de Spark 3.5 con Delta Lake. Corren en contenedores sobre EC2.
 | `build_user_profile.py` | Juan José Vargas | diario | Promedio y número de transacciones de los últimos 30 días por usuario → `silver.user_profile` |
 | `silver_to_gold.py` | Luis Moreno | 15 min | Dimensiones y MERGE de `fact_transaction` (con `is_fraud_injected` y `attack_id`) y `fact_alert` (con `trigger_event_ts`; estado de alertas leído de DynamoDB) |
 
+### Cómo correr los jobs de Vargas
+
+- **`build_user_profile.py`** (`spark-submit ... build_user_profile.py [--as-of 2026-11-08T00:00:00] [--run-id <id>]`): sin `--as-of` usa la hora actual; con la misma fecha da el mismo resultado. Lee `silver/transactions` y `bronze/catalogs/perfil_inicial` y reescribe `silver/user_profile` completo (`user_id`, `avg_amount_30d`, `n_tx_30d`, `profile_source` = real | mezcla | inicial, `as_of`).
+- **`detect_fraud.py`** (argumentos `--session`, `--trigger`, `--starting-offsets`, `--sink`; variables `STREAM_SESSION`, `DETECT_TRIGGER`, `ALERTS_SINK` = dynamodb | console, `ALERTS_TABLE`, `DYNAMODB_ENDPOINT_URL`): se detiene si no existe `silver/user_profile`. Una ráfaga o un monto acumulado que se sostiene es **una** alerta (el `window_start` queda fijo en el primer disparo). La lógica de las reglas está en `fraud_rules.py` (Python puro) y es la que prueba `tests/test_fraud_rules.py` contra `tests/reference_rules.py`.
+- **Orden:** `ingest_catalogs` → `bronze_to_silver` → `build_user_profile` → `detect_fraud`. La imagen necesita `pandas` y `pyarrow` (estado por usuario con `applyInPandasWithState`): hay que reconstruirla.
+- **Herramienta del analista:** `analyst/alertas.py` (`listar`, `abiertas`, `marcar`, `resumen`), ver el ADR-04.
+
 ## common/
 
 Esquemas (evento JSON, Silver, alerta) y configuración compartida. Los esquemas son el contrato entre integrantes: cambiarlos requiere avisar al equipo.
