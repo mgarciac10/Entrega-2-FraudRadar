@@ -5,8 +5,9 @@
 #   local     desarrollo sin AWS: Kafka propio (KRaft) + creación del topic
 #   producer  el productor sintético (en AWS corre en la EC2 t3.medium, contra MSK)
 #   spark     spark-master y spark-worker (clúster standalone). Los jobs se lanzan con spark-submit
-#             contra spark://spark-master:7077. Pendiente: servicios de los jobs de streaming
-#             (ingest-bronze, detect-fraud, con restart: always), que agregan sus responsables.
+#             contra spark://spark-master:7077.
+#   streaming jobs continuos con restart: always (ingest-bronze; falta detect-fraud). Necesitan el
+#             perfil spark. STREAM_SESSION fija la carpeta del checkpoint (nueva por cada MSK).
 #   airflow   (pendiente) postgres, scheduler y webserver
 #
 # Desarrollo local (Kafka propio y productor):
@@ -115,6 +116,7 @@ services:
       AWS_SESSION_TOKEN:
     volumes: &spark-volumes
       - ./spark:/opt/fraudradar/spark:ro
+      - ./tests:/opt/fraudradar/tests:ro
       - ./data:/data
 
   spark-worker:
@@ -129,3 +131,33 @@ services:
       SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-3}
       SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-10g}
     volumes: *spark-volumes
+
+  # --- Jobs de streaming (continuos) --------------------------------------
+  # Corren el driver en su propio contenedor y piden ejecutores al clúster. Cada uno toma 1 núcleo
+  # para dejar espacio a detect_fraud y a los batch.
+  ingest-bronze:
+    profiles: ["streaming"]
+    image: fraudradar-spark
+    hostname: ingest-bronze
+    depends_on:
+      spark-master:
+        condition: service_started
+      kafka-init:
+        condition: service_completed_successfully
+        required: false
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - spark://spark-master:7077
+      - --conf
+      - spark.driver.host=ingest-bronze
+      - --conf
+      - spark.cores.max=1
+      - --executor-memory
+      - 1g
+      - /opt/fraudradar/spark/streaming/ingest_bronze.py
+    environment:
+      <<: *spark-env
+      STREAM_SESSION: ${STREAM_SESSION:-local}
+    volumes: *spark-volumes
+    restart: always

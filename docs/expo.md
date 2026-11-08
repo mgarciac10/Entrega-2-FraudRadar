@@ -42,6 +42,7 @@ Sirven como respuesta a "¿qué problemas tuvieron?"; cada una enseñó algo de 
 - **Región bloqueada:** una política de la organización solo permite `us-east-2`; en `us-east-1` todo daba `AccessDenied` aunque el plan fuera pagado.
 - **Reemplazo de presupuestos:** cambiar el correo de un recurso con nombre fijo en CloudFormation obliga a reemplazarlo y falla. Se separaron los correos de costos y de alertas.
 - **Configuración CP vs. recomendación de AWS:** RF 2 con `min.insync.replicas` 2 bloquea escrituras mientras MSK parcha un broker. Es una elección consciente (preferimos bloquear antes que perder o duplicar), pero va contra la guía de alta disponibilidad de AWS. Producción usaría 3 brokers.
+- **Los offsets de Kafka no son una llave única:** cada MSK nuevo los reinicia en 0. Bronze guarda `_session`, y el linaje de un evento es `(_session, partición, offset)`.
 - **Correos duplicados posibles:** Lambda entrega los eventos de DynamoDB Streams al menos una vez; el registro es exacto pero un correo podría repetirse. Aceptado y documentado.
 
 ## 5. Costo y operación
@@ -61,7 +62,8 @@ Sirven como respuesta a "¿qué problemas tuvieron?"; cada una enseñó algo de 
 
 - [ ] Latencia evento → alerta, p50 y p95 (meta: p95 < 2 min)
 - [ ] Throughput sostenido: 200 ev/s por 10 min y pico de 1.000 ev/s por 60 s (consumer lag vuelve a < 30 s en 2 min)
-- [ ] Evento → Bronze (meta < 30 s) y evento → Gold (meta ≤ 20 min)
+- [x] Evento → Bronze en local: como máximo ~15 s (el trigger) en operación normal. Tras matar `ingest_bronze` ~1 min, el primer lote al reiniciar recuperó 1.197 eventos sin pérdidas ni duplicados (Kafka = Bronze = 6.039). Falta medirlo en AWS
+- [ ] Evento → Gold (meta ≤ 20 min)
 - [ ] Precisión y recall por regla, medidos con las etiquetas (Q9)
 - [ ] Fraude evitable (Q8): porcentaje del monto fraudulento posterior a la primera alerta, por patrón
 - [ ] Tiempo de recuperación tras reiniciar una EC2 (meta < 10 min)
