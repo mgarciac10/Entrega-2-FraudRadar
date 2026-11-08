@@ -1,5 +1,7 @@
 # tests
 
+Verificaciones de Spark (`bash tests/run_spark_checks.sh`): `ingest_catalogs` y `bronze_to_silver` (validación, rechazados, MERGE sin duplicados y relectura completa de Bronze). `spark_check_ingest_bronze.py` compara Kafka con Bronze y se usa en la prueba de matar el job.
+
 Pruebas de las reglas de fraude y de las transformaciones, más las pruebas de requisitos no funcionales que se muestran en la demo:
 
 - Matar un job de Spark y verificar que Silver y las alertas no cambian al reiniciar (exactly-once, RNF-03).
