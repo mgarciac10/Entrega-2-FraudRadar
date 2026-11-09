@@ -19,7 +19,7 @@ BROKERS="$("${AWS[@]}" kafka get-bootstrap-brokers --cluster-arn "$CLUSTER" --qu
 
 case "$ACTION" in
   topic) run_remote "$APP" "bash /opt/fraudradar/infra/remote/create_topic.sh '$BROKERS'" ;;
-  start) run_remote "$APP" "bash /opt/fraudradar/infra/remote/start_producer.sh '$BROKERS' ${2:-20}" ;;
+  start) run_remote "$APP" "bash /opt/fraudradar/infra/remote/start_producer.sh '$BROKERS' ${2:-20} '${S3_BUCKET:?Define S3_BUCKET en el .env}' '$REGION'" ;;
   check) run_remote "$APP" "bash /opt/fraudradar/infra/remote/check_producer.sh '$BROKERS'" ;;
   stop)  run_remote "$APP" "bash /opt/fraudradar/infra/remote/stop_producer.sh" ;;
   *) echo "Uso: producer_aws.sh push|topic|start [tasa]|check|stop"; exit 1 ;;

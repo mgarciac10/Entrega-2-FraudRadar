@@ -11,6 +11,7 @@ Origen: asesoría con el profesor (noviembre 2026). Diagrama nuevo en [`arquitec
 | Bronze → Silver | Streaming continuo (job 2) | Batch de Airflow cada 15 min (`bronze_to_silver`, trigger `availableNow`) | El profesor pidió que Airflow orqueste Bronze → Silver → Gold |
 | Detección de fraude | Job 2 leía Bronze | `detect_fraud` lee MSK directamente | No depende de Bronze; menor latencia |
 | Ingesta de catálogos | "Tarea Airflow load_catalogs" en la capa de ingestión | Job Spark `ingest_catalogs` disparado por Airflow | Airflow orquesta; no transporta datos |
+| Dónde corre Airflow | EC2 t3.medium, con el productor | EC2 de Spark (t3.xlarge) | El driver de los batch corre en el scheduler; los ejecutores deben alcanzarlo por la red de Docker |
 | Gold | `fact_alert` sin hora | `fact_alert` con `time_key` (`dim_time` compartida) | Pregunta 5 pide franja horaria |
 | Machine learning | Fuera del alcance | Sigue fuera; se justifica con el estado del arte como trabajo futuro | Decisión del equipo |
 

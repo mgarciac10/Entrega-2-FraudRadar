@@ -17,8 +17,8 @@ AWS=(aws --profile "$PROFILE" --region "$REGION")
 cat <<'EOF'
 Se va a crear el stack por sesión de FraudRadar:
   - Amazon MSK: 2 brokers kafka.t3.small   ~USD 0,09/h
-  - EC2 Spark   t3.xlarge                  ~USD 0,17/h
-  - EC2 Airflow t3.medium                  ~USD 0,04/h
+  - EC2 Spark   t3.xlarge (Spark + Airflow) ~USD 0,17/h
+  - EC2 App     t3.medium (productor)      ~USD 0,04/h
   - IPv4 públicas y discos                 ~USD 0,02/h
   TOTAL aproximado: USD 0,32 por hora (precios on-demand de referencia; el crédito
   de USD 100 alcanza para unas 300 horas). MSK tarda 20-30 minutos en crearse y

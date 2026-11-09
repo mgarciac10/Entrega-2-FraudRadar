@@ -25,7 +25,7 @@ Un esquema mixto en `us-east-2` (Ohio), la región habilitada para el proyecto d
 |---|---|---|
 | Gestionados que cobran por uso o almacenamiento | S3, DynamoDB on-demand, Lambda, SNS, Glue Data Catalog, Athena | Casi no cuestan cuando el pipeline está quieto |
 | Gestionado con costo por hora | Amazon MSK, 2 × `kafka.t3.small` | Sugerencia del profesor (ADR-01) |
-| EC2 con Docker | Spark en t3.xlarge; Airflow y productor en t3.medium | Mismo `docker-compose.yml` en local y en AWS (ADR-02 y ADR-05) |
+| EC2 con Docker | Spark y Airflow en t3.xlarge; productor en t3.medium | Mismo `docker-compose.yml` en local y en AWS (ADR-02 y ADR-05). Airflow va con Spark porque el driver de los batch corre en su contenedor |
 
 Reglas de operación:
 
@@ -46,6 +46,8 @@ Reglas de operación:
 ## Cambio respecto al E1
 
 Se deja el Learner Lab por una cuenta con créditos. Esto permite MSK, DynamoDB, Lambda y SNS, que es lo que pidió la asesoría. Se mantiene la idea central del E1: datos y checkpoints en S3, cómputo en EC2 con el mismo docker-compose, y apagar todo fuera de las sesiones.
+
+Airflow pasa de la t3.medium del productor a la EC2 de Spark: el driver de cada batch corre en el contenedor del scheduler y los ejecutores tienen que alcanzarlo (ADR-05). La operación queda en `infra/scripts/pipeline_aws.sh`.
 
 ## Fuentes
 

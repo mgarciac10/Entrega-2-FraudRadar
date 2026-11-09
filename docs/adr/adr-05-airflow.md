@@ -20,7 +20,7 @@
 
 ## Decisión
 
-Airflow 2.x en Docker con LocalExecutor, sobre la EC2 t3.medium que comparte con el productor. Las tareas ejecutan `spark-submit` desde el scheduler contra el master de Spark. Airflow no mueve datos: solo dispara jobs y verifica condiciones. El mismo compose permite desarrollar en local con PostgreSQL, sin AWS.
+Airflow 2.x en Docker con LocalExecutor, en la EC2 de Spark (t3.xlarge), dentro del mismo docker-compose que el clúster. Las tareas ejecutan `spark-submit` desde el scheduler contra el master de Spark. El driver de cada batch corre dentro de `airflow-scheduler` y los ejecutores se conectan de vuelta a él por la red de Docker; con Airflow en otra EC2 esa conexión no existe sin fijar puertos y abrir red, por eso van juntos. Airflow no mueve datos: solo dispara jobs y verifica condiciones. El mismo compose permite desarrollar en local con PostgreSQL, sin AWS.
 
 | DAG | Horario | Tareas |
 |---|---|---|
@@ -39,8 +39,9 @@ Airflow 2.x en Docker con LocalExecutor, sobre la EC2 t3.medium que comparte con
 
 - **Latencia de Silver.** Silver queda hasta 15 min atrás y Gold hasta 20 min (15 min del horario más ~5 de ejecución). No afecta las alertas, que salen de MSK (ADR-02).
 - **Corridas encadenadas.** Con `max_active_runs=1`, una corrida lenta retrasa la siguiente.
-- **Más operación.** El equipo opera Airflow (scheduler, webserver y Postgres de metadatos) y la conexión de red entre la EC2 de Airflow y la de Spark.
-- **Dependencia de red del driver.** En el modo client, `spark-submit` se ejecuta en `airflow-scheduler`; el master y los workers deben poder alcanzar ese host.
+- **Más operación.** El equipo opera Airflow (scheduler, webserver y Postgres de metadatos).
+- **Dependencia de red del driver.** En el modo client, `spark-submit` se ejecuta en `airflow-scheduler`; el master y los workers deben poder alcanzar ese host. Por eso Airflow comparte EC2 y red de Docker con Spark.
+- **Una máquina más cargada.** Spark, los dos jobs de streaming y Airflow comparten la t3.xlarge (16 GB): worker de 4 cupos y 6 GB, ejecutores de streaming de 1 GB.
 - **Sin dueño para el streaming.** El ciclo de vida de los jobs continuos queda en Docker, no en Airflow. Si un job de streaming muere, Airflow lo detecta indirectamente porque Bronze deja de actualizarse.
 
 ## Cambio respecto al E1
@@ -51,3 +52,4 @@ Airflow 2.x en Docker con LocalExecutor, sobre la EC2 t3.medium que comparte con
 | Ingesta de catálogos | "Tarea Airflow `load_catalogs`" dibujada en la capa de ingestión | Job Spark `ingest_catalogs`, disparado por Airflow |
 | Sensor de frescura | Sobre Silver | Sobre Bronze, porque ahora Silver lo produce el propio DAG |
 | Estado de alertas | Extraído de MongoDB | Extraído de DynamoDB (ADR-04) |
+| Dónde corre | EC2 t3.medium, junto al productor | EC2 de Spark (t3.xlarge): el driver de los batch corre en el scheduler y los ejecutores deben alcanzarlo |

@@ -107,24 +107,27 @@ python -m unittest discover tests
 ```
 
 Los chequeos de Spark se ejecutan sin MSK, DynamoDB, Glue ni Athena; el runner construye la imagen
-Spark y crea un lake de prueba bajo `data/test_spark/`. Para el pipeline integrado:
+Spark y crea un lake de prueba bajo `data/test_spark/`. Corren un job a la vez: es la forma de
+probar en un portátil.
+
+**Pipeline integrado en local.** Necesita más de 8 GB para Docker: con Kafka, productor, Spark, los
+dos streaming, DynamoDB Local y Airflow encendidos se usan ~5,7 GB, y al lanzar Airflow los batch
+un portátil con 8 GB para Docker se satura. La prueba integrada de referencia se hace en AWS
+(sección 5). Si la máquina alcanza, en el `.env`: `LAKE_URI=/data/lake`,
+`LANDING_URI=/data/catalogs`, `CHECKPOINT_URI=/data/checkpoints` y
+`DYNAMODB_ENDPOINT_URL=http://dynamodb-local:8000`.
 
 ```bash
-docker compose --profile local --profile producer --profile spark --profile airflow up -d --build
-docker compose --profile local --profile producer --profile spark --profile airflow exec -T spark-master /opt/spark/bin/spark-submit --master spark://spark-master:7077 /opt/fraudradar/spark/batch/ingest_catalogs.py
-docker compose --profile local --profile producer --profile spark --profile airflow up -d ingest-bronze
-# Esperar a que Bronze reciba eventos; luego correr en el orden indicado:
-docker compose --profile spark exec -T spark-master /opt/spark/bin/spark-submit --master spark://spark-master:7077 /opt/fraudradar/spark/batch/bronze_to_silver.py
-docker compose --profile spark exec -T spark-master /opt/spark/bin/spark-submit --master spark://spark-master:7077 /opt/fraudradar/spark/batch/build_user_profile.py
-# Solo después de que silver/user_profile exista, arrancar el segundo job de streaming:
-docker compose --profile streaming up -d detect-fraud
+docker compose --profile local --profile producer --profile spark --profile streaming --profile airflow up -d --build
+# En Airflow (http://localhost:8081): activar y lanzar daily_batch (catálogos y perfil inicial)
+# y, cuando termine, activar lakehouse_15min
 ```
 
-`ingest-bronze` corre continuo y escribe `lake/bronze/transactions`; `detect-fraud` necesita `silver/user_profile`.
-El productor permanece activo mientras corre el pipeline. En el `.env.example`, `ALERTS_SINK=console`
-y `ALERTS_SOURCE=local-json` evitan llamadas de alertas a AWS. La interfaz Airflow queda en
-`http://localhost:8081` (usuario/clave locales definidos en `.env`); habilitar los DAGs pausados y
-dispararlos manualmente. El DAG de 15 minutos exige Bronze actualizado en los últimos 10 minutos.
+`ingest-bronze` corre continuo y escribe `lake/bronze/transactions`. `detect-fraud` se reinicia solo
+hasta que `daily_batch` crea `silver/user_profile` (funciona con el lake vacío) y luego escribe en
+DynamoDB Local; ver las alertas o marcarlas desde tu máquina con
+`DYNAMODB_ENDPOINT_URL=http://localhost:8000 python analyst/alertas.py abiertas`. El DAG de 15 minutos
+exige Bronze actualizado en los últimos 10 minutos.
 
 Los pasos y verificaciones de Gold, Airflow y calidad están documentados en
 [`airflow/README.md`](airflow/README.md), [`spark/README.md`](spark/README.md) y
@@ -133,41 +136,49 @@ Gold exista en S3.
 
 ### 5. Sesión en AWS (cobra por hora: MSK y 2 EC2)
 
-La configuración local anterior no crea ni usa recursos AWS. Para una sesión AWS se requiere
-autorización del dueño de la cuenta; revisar el costo y avisar al equipo antes de iniciar recursos.
-En Git Bash, autenticar el perfil `fraudradar` en `us-east-2` y completar `.env` con el bucket
-persistente (`S3_BUCKET`), `ALERTS_SOURCE=dynamodb`, `ALERTS_SINK=dynamodb`, los brokers TLS de MSK
-(`KAFKA_BOOTSTRAP_SERVERS` y `KAFKA_SECURITY_PROTOCOL=SSL`) y un `STREAM_SESSION` único. No guardar
-credenciales AWS en `.env`: las EC2 deben usar su rol de instancia. Como `.env.example` tiene
-valores conservadores para Docker Desktop, en la EC2 Spark también hay que ajustar
-`SPARK_WORKER_MEMORY` y `SPARK_WORKER_CORES` a la capacidad de esa instancia (para la `t3.xlarge`
-del diseño, el punto de partida anterior era `10g` y `3` núcleos; validar con carga real).
+Crear el stack lo decide el dueño de la cuenta: revisar el costo y avisar al equipo antes. En tu
+máquina el `.env` solo necesita el perfil, la región y `S3_BUCKET`: la configuración de cada EC2 la
+escriben los scripts (rutas `s3a://`, brokers TLS de MSK, `STREAM_SESSION` nueva, alertas en
+DynamoDB, worker de 4 cupos y 6 GB). Las EC2 usan su rol de instancia: nada de llaves en `.env`.
+
+Topología: la t3.medium corre el productor; la t3.xlarge corre Spark, `ingest-bronze`,
+`detect-fraud` y Airflow (el driver de los batch corre en el scheduler y los ejecutores deben
+alcanzarlo, ADR-05).
 
 ```bash
 bash infra/scripts/session_up.sh                 # pide confirmación; MSK tarda 20-30 min
 bash infra/scripts/test_session.sh               # prueba de humo (7 verificaciones)
-bash infra/scripts/producer_aws.sh push          # envía el código a la EC2
+bash infra/scripts/push_code.sh                  # código a las dos EC2
 bash infra/scripts/producer_aws.sh topic         # topic transactions: 6 particiones, RF 2
-bash infra/scripts/producer_aws.sh start 20      # productor a 20 ev/s contra MSK
-bash infra/scripts/producer_aws.sh check         # verifica que los mensajes llegan
+bash infra/scripts/producer_aws.sh start 20      # catálogos a S3 landing/ y productor a 20 ev/s
+bash infra/scripts/pipeline_aws.sh start         # Spark, streaming y Airflow en la EC2 de Spark
+bash infra/scripts/pipeline_aws.sh dag daily_batch      # catálogos a Bronze y perfil inicial
+bash infra/scripts/pipeline_aws.sh dag lakehouse_15min  # cuando daily_batch termine
+bash infra/scripts/pipeline_aws.sh status        # contenedores y corridas de los DAG
+bash infra/scripts/pipeline_aws.sh register      # tablas de Gold en Glue (tras el primer Gold)
+```
+
+`detect-fraud` se reinicia solo hasta que `daily_batch` crea `silver/user_profile`; después
+escribe en `fraud_alerts` y llegan los correos. Las interfaces se ven con reenvío de puertos de
+Session Manager (requiere el plugin de Session Manager de la CLI), por ejemplo Airflow:
+
+```bash
+aws ssm start-session --profile fraudradar --region us-east-2 --target <SparkInstanceId> --document-name AWS-StartPortForwardingSession --parameters portNumber=8081,localPortNumber=8081
 ```
 
 **Al terminar: `bash infra/scripts/session_down.sh`** (borra MSK y las EC2; los datos quedan en S3 y DynamoDB). `bash infra/scripts/session_status.sh` muestra si hay algo encendido y el costo aproximado.
 
-Estos comandos crean y validan la infraestructura y el productor en MSK; no equivalen a validar el
-pipeline completo de Spark/Airflow en AWS. Esa integración sigue pendiente: hay que desplegar el
-código e imágenes de Spark/Airflow a las EC2 y probar S3, MSK por TLS, DynamoDB, los DAGs y Glue/
-Athena en una sesión autorizada. No se ha usado AWS para el trabajo local descrito arriba.
-
 ### 6. Estado de pruebas y pendientes
 
 En Docker local se validaron la ingesta de los cuatro catálogos, Bronze → Silver, las tareas de
-alertas, dimensiones y hechos Gold, los chequeos de calidad y `build_user_profile`. Los DAG runs de
-`lakehouse_15min` y `daily_batch` finalizaron correctamente, incluido `optimize_and_vacuum`; también
-pasaron `python -m compileall`, las 48 pruebas unitarias (7 omitidas), la configuración de Compose y
-`bash tests/run_spark_checks.sh` ("Todo bien"). Las consultas Q5–Q9 aún deben revisarse con el
-equipo y ejecutarse en Athena. El flujo Spark/Airflow en AWS, Glue y Athena requiere una sesión
-aprobada y sigue pendiente.
+alertas, dimensiones y hechos Gold (incremental y en hora de Colombia), los chequeos de calidad y
+`build_user_profile` (también con el lake vacío); `bash tests/run_spark_checks.sh` da "Todo bien".
+Contra DynamoDB Local: escritura condicional de alertas, reemisión ignorada, marcado con
+`analyst/alertas.py` y extracción a `silver/alert_status`. En el flujo integrado local, `daily_batch`
+corrió con el lake vacío y `detect-fraud` escribió alertas en DynamoDB Local; la corrida completa de
+`lakehouse_15min` saturó el portátil (8 GB para Docker) y queda para AWS. Q5 a Q9 se validaron en
+Spark SQL; falta Athena. Pendiente en AWS: Spark contra MSK por TLS y S3, Airflow en la EC2 de
+Spark, Glue y Athena.
 
 ## Checklist del Entregable 2
 
