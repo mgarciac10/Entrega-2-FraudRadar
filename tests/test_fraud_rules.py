@@ -100,6 +100,32 @@ class Episodes(unittest.TestCase):
         self.assertEqual(len(fires), 2)
         self.assertNotEqual(fires[0]["window_start_ms"], fires[1]["window_start_ms"])
 
+    def test_single_big_amount_after_an_old_episode_is_a_new_alert(self):
+        # Episodio de 2,1 M y, 20 min después y sin tx intermedias, una sola de 2,5 M: son dos ataques
+        events = [ev(0, "u1", 0, 900_000), ev(1, "u1", 60, 900_000), ev(2, "u1", 120, 300_000),
+                  ev(3, "u1", 1320, 2_500_000)]
+        for chunk in (1, 1000):
+            fires = [f for f in run(events, chunk) if f["rule"] == "monto_acumulado" and f["first_of_episode"]]
+            self.assertEqual([f["trigger_tx_id"] for f in fires], ["tx-2", "tx-3"], f"lote de {chunk}")
+            self.assertEqual(fires[1]["window_start_ms"], ms(T0) + 1_320_000)
+
+    def test_sustained_episode_stays_one_alert(self):
+        # 2,5 M cada 4 min durante 40 min: la ventana nunca se enfría, es un solo episodio
+        events = [ev(i, "u1", i * 240, 2_500_000) for i in range(11)]
+        fires = [f for f in run(events) if f["rule"] == "monto_acumulado"]
+        self.assertEqual(sum(f["first_of_episode"] for f in fires), 1)
+        self.assertEqual(len({f["window_start_ms"] for f in fires}), 1)
+
+    def test_old_state_format_still_loads(self):
+        # Libreta guardada por la versión anterior: 6 tx ya en ráfaga y el episodio como un entero
+        state, _ = fr.evaluate(fr.new_state(), [ev(i, "u1", i * 10) for i in range(6)])
+        state["episodes"]["rafaga"] = ms(T0)
+        state, out = fr.evaluate(json.loads(json.dumps(state)), [ev(6, "u1", 60)])
+        rafaga = [f for f in out if f["rule"] == "rafaga"]
+        self.assertEqual(len(rafaga), 1)
+        self.assertFalse(rafaga[0]["first_of_episode"])  # sigue siendo la misma alerta
+        self.assertEqual(rafaga[0]["window_start_ms"], ms(T0))
+
     def test_threshold_is_strict(self):
         self.assertEqual(fired(run([ev(i, "u1", i * 10) for i in range(5)]), "rafaga"), set())  # 5 tx: no
         self.assertEqual(len(fired(run([ev(i, "u1", i * 10) for i in range(6)]), "rafaga")), 1)  # 6 tx: sí
