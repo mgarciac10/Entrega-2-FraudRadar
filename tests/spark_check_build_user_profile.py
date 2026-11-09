@@ -63,6 +63,12 @@ avg1, n1 = init[U1]
 spark = get_spark("check_build_user_profile")
 spark.sparkContext.setLogLevel("ERROR")
 
+# Lake vacío (primer arranque de una sesión): sin silver/transactions, el perfil sale de perfil_inicial
+submit("batch/build_user_profile.py", "--as-of", "2026-11-08", "--run-id", "run-0")
+p0 = profile(spark)
+check(len(p0) == len(con_historial) and {r["profile_source"] for r in p0.values()} == {"inicial"},
+      f"sin Silver, perfil solo con perfil_inicial ({len(p0)} usuarios)")
+
 # Silver con 1 día de historia antes del corte (2026-11-08): 3 transacciones de 200.000 de U1
 # y una de U1 posterior al corte, que no debe contar
 write_silver(spark, [

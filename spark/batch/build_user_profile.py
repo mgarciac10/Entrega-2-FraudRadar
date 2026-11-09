@@ -25,6 +25,7 @@ Uso:
 import argparse
 from datetime import datetime, timezone
 
+from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
 import reglas
@@ -112,7 +113,14 @@ def main():
     spark = get_spark("build_user_profile")
     spark.sparkContext.setLogLevel("WARN")
 
-    tx = spark.read.format("delta").load(lake_path("silver", "transactions")).select("user_id", "event_ts", "amount_cop")
+    tx_path = lake_path("silver", "transactions")
+    if DeltaTable.isDeltaTable(spark, tx_path):
+        tx = spark.read.format("delta").load(tx_path).select("user_id", "event_ts", "amount_cop")
+    else:
+        # Primer arranque (lake vacío): todavía no hay Silver. El perfil sale solo de perfil_inicial,
+        # y así detect_fraud puede arrancar antes de la primera corrida de bronze_to_silver.
+        print(f"{tx_path} no existe todavía: perfil solo con perfil_inicial")
+        tx = spark.createDataFrame([], "user_id string, event_ts timestamp, amount_cop long")
     initial = latest_catalog(spark, "perfil_inicial")
 
     profile = (
