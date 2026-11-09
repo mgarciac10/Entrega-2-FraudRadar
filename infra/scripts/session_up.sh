@@ -23,6 +23,9 @@ Se va a crear el stack por sesión de FraudRadar:
   TOTAL aproximado: USD 0,32 por hora (precios on-demand de referencia; el crédito
   de USD 100 alcanza para unas 300 horas). MSK tarda 20-30 minutos en crearse y
   se cobra desde que empieza. MSK NO se puede pausar: hay que borrarlo.
+  LÍMITE DE GASTO DEL PROYECTO (AWS Settings > Billing): es un tope real. AWS pausa los
+  recursos si el PRONÓSTICO del mes lo supera, aunque lo gastado sea poco. Con el stack
+  encendido el pronóstico es de ~USD 165-230: verifica que el límite sea de al menos USD 160.
 EOF
 if [ "${1:-}" != "--yes" ]; then
   read -r -p "Escribe 'si' para crear el stack: " answer
