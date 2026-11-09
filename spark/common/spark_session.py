@@ -52,6 +52,9 @@ def get_spark(app_name, **conf):
         # 6 particiones de Kafka: no hace falta el valor por defecto de 200 para este volumen
         .config("spark.sql.shuffle.partitions", os.environ.get("SPARK_SHUFFLE_PARTITIONS", "6"))
         .config("spark.sql.session.timeZone", "UTC")
+        # El driver de Airflow y los ejecutores Spark usan UID distintos en el volumen local.
+        # Deja archivos y directorios Delta con escritura de grupo para que ambos puedan confirmar.
+        .config("spark.hadoop.fs.permissions.umask-mode", "0002")
         # Disco local (solo desarrollo): sin sumas de verificación .crc. Con el sistema de archivos
         # local por defecto, Delta falla con ChecksumException al releer su propio _delta_log.
         # En S3 no aplica.

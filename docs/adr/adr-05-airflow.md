@@ -20,14 +20,17 @@
 
 ## Decisión
 
-Airflow 2.x en Docker con LocalExecutor, sobre la EC2 t3.medium que comparte con el productor. Las tareas lanzan los jobs de `spark/batch/` con `SparkSubmitOperator` contra el master de Spark. Airflow no mueve datos: solo dispara jobs y verifica condiciones.
+Airflow 2.x en Docker con LocalExecutor, sobre la EC2 t3.medium que comparte con el productor. Las tareas ejecutan `spark-submit` desde el scheduler contra el master de Spark. Airflow no mueve datos: solo dispara jobs y verifica condiciones. El mismo compose permite desarrollar en local con PostgreSQL, sin AWS.
 
 | DAG | Horario | Tareas |
 |---|---|---|
-| `lakehouse_15min` | cada 15 min | `check_bronze_freshness` → `bronze_to_silver` → [`extract_alert_status`, `build_dimensions`] → `silver_to_gold` → `data_quality_checks` |
+| `lakehouse_15min` | cada 15 min | `check_bronze_freshness` → `bronze_to_silver` → `extract_alert_status` → `build_dimensions` → `silver_to_gold` → `data_quality_checks` |
 | `daily_batch` | diario | `ingest_catalogs` → `build_user_profile` → `optimize_and_vacuum` |
 
-- `check_bronze_freshness` es un sensor: exige que la última versión de `bronze.transactions` tenga menos de 10 min. Si falla, las tareas siguientes quedan en `upstream_failed` y Gold no se construye con datos incompletos (RF-11).
+- `check_bronze_freshness` es un sensor: exige que el último commit de `bronze.transactions` tenga menos de 10 min (mtime de los JSON Delta en local/S3). Si falla, las tareas siguientes quedan en `upstream_failed` y Gold no se construye con datos incompletos (RF-11).
+- `extract_alert_status` copia DynamoDB a Silver; en local lee un JSON de prueba y no llama a AWS.
+- `build_dimensions` y `silver_to_gold` cargan las dimensiones y los dos hechos; `data_quality_checks` bloquea la corrida si falla una regla de calidad.
+- `optimize_and_vacuum` compacta Delta a diario y conserva la retención mínima de 168 horas.
 - `ingest_catalogs` es un job de Spark que lee los CSV de `S3 landing/` y escribe Bronze. Airflow solo lo dispara.
 - **Configuración común:** 2 reintentos con 2 min de espera, `max_active_runs=1` para evitar dos MERGE simultáneos sobre la misma tabla, y `catchup=False`.
 - **Los jobs de streaming no dependen de Airflow.** Corren continuos (`restart: always` en Docker), y Airflow solo verifica su salud mediante el sensor de frescura.
@@ -37,6 +40,7 @@ Airflow 2.x en Docker con LocalExecutor, sobre la EC2 t3.medium que comparte con
 - **Latencia de Silver.** Silver queda hasta 15 min atrás y Gold hasta 20 min (15 min del horario más ~5 de ejecución). No afecta las alertas, que salen de MSK (ADR-02).
 - **Corridas encadenadas.** Con `max_active_runs=1`, una corrida lenta retrasa la siguiente.
 - **Más operación.** El equipo opera Airflow (scheduler, webserver y Postgres de metadatos) y la conexión de red entre la EC2 de Airflow y la de Spark.
+- **Dependencia de red del driver.** En el modo client, `spark-submit` se ejecuta en `airflow-scheduler`; el master y los workers deben poder alcanzar ese host.
 - **Sin dueño para el streaming.** El ciclo de vida de los jobs continuos queda en Docker, no en Airflow. Si un job de streaming muere, Airflow lo detecta indirectamente porque Bronze deja de actualizarse.
 
 ## Cambio respecto al E1

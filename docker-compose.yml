@@ -8,7 +8,7 @@
 #             contra spark://spark-master:7077.
 #   streaming jobs continuos con restart: always (ingest-bronze y detect-fraud). Necesitan el
 #             perfil spark. STREAM_SESSION fija la carpeta del checkpoint (nueva por cada MSK).
-#   airflow   (pendiente) postgres, scheduler y webserver
+#   airflow   Airflow local con PostgreSQL (no accede a AWS salvo que se configure ALERTS_SOURCE)
 #
 # Desarrollo local (Kafka propio y productor):
 #   docker compose --profile local --profile producer up --build
@@ -77,6 +77,8 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       KAFKA_SECURITY_PROTOCOL: ${KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
       KAFKA_TOPIC: ${KAFKA_TOPIC:-transactions}
+      PYSPARK_PYTHON: python3
+      PYSPARK_DRIVER_PYTHON: python3
       PRODUCER_RATE_EPS: ${PRODUCER_RATE_EPS:-20}
       PRODUCER_FRAUD_RATIO: ${PRODUCER_FRAUD_RATIO:-0.02}
       CATALOG_DIR: /app/data/catalogs
@@ -85,6 +87,8 @@ services:
     restart: unless-stopped
 
   # --- Spark (clúster standalone) ----------------------------------------
+  # /data se comparte entre Spark (UID/GID 185) y el driver de Airflow (UID 50000/GID 0).
+  # Los grupos y umask 0002 permiten que ambos confirmen logs y archivos Delta.
   # El código se monta en /opt/fraudradar/spark: editar un job no requiere reconstruir la imagen.
   # En AWS las credenciales de S3 y DynamoDB vienen del rol de la EC2; en local, pasa las variables
   # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN.
@@ -95,7 +99,11 @@ services:
       dockerfile: spark/Dockerfile
     image: fraudradar-spark
     hostname: spark-master
-    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    command:
+      - /bin/bash
+      - -c
+      - umask 0002; exec /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    group_add: ["0"]
     ports:
       - "8080:8080" # UI del master
       - "7077:7077"
@@ -122,14 +130,18 @@ services:
   spark-worker:
     profiles: ["spark"]
     image: fraudradar-spark
-    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    command:
+      - /bin/bash
+      - -c
+      - umask 0002; exec /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     depends_on:
       - spark-master
+    group_add: ["0"]
     environment:
       <<: *spark-env
-      # La t3.xlarge tiene 4 vCPU y 16 GB: se reserva memoria para el sistema y el master.
-      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-3}
-      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-10g}
+      # Defaults for local Docker Desktop; override for a larger AWS instance.
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-2}
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2g}
     volumes: *spark-volumes
 
   # --- Jobs de streaming (continuos) --------------------------------------
@@ -146,16 +158,18 @@ services:
         condition: service_completed_successfully
         required: false
     command:
-      - /opt/spark/bin/spark-submit
-      - --master
-      - spark://spark-master:7077
-      - --conf
-      - spark.driver.host=ingest-bronze
-      - --conf
-      - spark.cores.max=1
-      - --executor-memory
-      - 1g
-      - /opt/fraudradar/spark/streaming/ingest_bronze.py
+      - /bin/bash
+      - -c
+      - |
+        umask 0002
+        exec /opt/spark/bin/spark-submit \
+          --master spark://spark-master:7077 \
+          --conf spark.hadoop.fs.permissions.umask-mode=0002 \
+          --conf spark.driver.host=ingest-bronze \
+          --conf spark.cores.max=1 \
+          --executor-memory 1g \
+          /opt/fraudradar/spark/streaming/ingest_bronze.py
+    group_add: ["0"]
     environment:
       <<: *spark-env
       STREAM_SESSION: ${STREAM_SESSION:-local}
@@ -177,21 +191,119 @@ services:
         condition: service_completed_successfully
         required: false
     command:
-      - /opt/spark/bin/spark-submit
-      - --master
-      - spark://spark-master:7077
-      - --conf
-      - spark.driver.host=detect-fraud
-      - --conf
-      - spark.cores.max=1
-      - --executor-memory
-      - 1g
-      - /opt/fraudradar/spark/streaming/detect_fraud.py
+      - /bin/bash
+      - -c
+      - |
+        umask 0002
+        exec /opt/spark/bin/spark-submit \
+          --master spark://spark-master:7077 \
+          --conf spark.hadoop.fs.permissions.umask-mode=0002 \
+          --conf spark.driver.host=detect-fraud \
+          --conf spark.cores.max=1 \
+          --executor-memory 1g \
+          /opt/fraudradar/spark/streaming/detect_fraud.py
+    group_add: ["0"]
     environment:
       <<: *spark-env
       STREAM_SESSION: ${STREAM_SESSION:-local}
-      ALERTS_SINK: ${ALERTS_SINK:-dynamodb}
+      ALERTS_SINK: ${ALERTS_SINK:-console}
       ALERTS_TABLE: ${ALERTS_TABLE:-fraud_alerts}
       DYNAMODB_ENDPOINT_URL: ${DYNAMODB_ENDPOINT_URL:-}
     volumes: *spark-volumes
     restart: always
+
+  # --- Airflow (batch y orquestación) -------------------------------------
+  postgres-airflow:
+    profiles: ["airflow"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  airflow-init:
+    profiles: ["airflow"]
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+    environment:
+      <<: &airflow-env
+        AIRFLOW__CORE__EXECUTOR: LocalExecutor
+        AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow/airflow
+        AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+        AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+        AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:-local-dev-only-change-me}
+        AWS_REGION: ${AWS_REGION:-us-east-2}
+        S3_BUCKET: ${S3_BUCKET:-}
+        LAKE_URI: ${LAKE_URI:-/data/lake}
+        LANDING_URI: ${LANDING_URI:-/data/catalogs}
+        CHECKPOINT_URI: ${CHECKPOINT_URI:-/data/checkpoints}
+        ALERTS_SOURCE: ${ALERTS_SOURCE:-local-json}
+        ALERTS_JSON: ${ALERTS_JSON:-/opt/fraudradar/tests/fixtures/alerts.json}
+        ALERTS_TABLE: ${DYNAMODB_ALERTS_TABLE:-fraud_alerts}
+        DYNAMODB_ENDPOINT_URL: ${DYNAMODB_ENDPOINT_URL:-}
+        PYSPARK_PYTHON: python3
+        PYSPARK_DRIVER_PYTHON: python3
+        PYTHONPATH: /opt/fraudradar/spark/common:/opt/fraudradar/spark/batch:/opt/fraudradar/spark/streaming
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_WWW_USER_USERNAME:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_WWW_USER_PASSWORD:-local-only-change-me}
+      _AIRFLOW_WWW_USER_EMAIL: ${AIRFLOW_WWW_USER_EMAIL:-admin@example.com}
+      _AIRFLOW_WWW_USER_FIRSTNAME: ${AIRFLOW_WWW_USER_FIRSTNAME:-Local}
+      _AIRFLOW_WWW_USER_LASTNAME: ${AIRFLOW_WWW_USER_LASTNAME:-User}
+      _AIRFLOW_WWW_USER_ROLE: Admin
+    volumes: &airflow-volumes
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./sql/athena:/opt/fraudradar/sql/athena:ro
+      - ./spark:/opt/fraudradar/spark:ro
+      - ./tests:/opt/fraudradar/tests:ro
+      - ./data:/data
+    command: version
+
+  airflow-webserver:
+    profiles: ["airflow"]
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *airflow-env
+    volumes: *airflow-volumes
+    ports:
+      - "127.0.0.1:8081:8080"
+    command: webserver
+    restart: unless-stopped
+
+  airflow-scheduler:
+    profiles: ["airflow"]
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      spark-master:
+        condition: service_started
+    environment:
+      <<: *airflow-env
+    volumes: *airflow-volumes
+    group_add: ["185"]
+    command: ["bash", "-c", "umask 0002; exec airflow scheduler"]
+    restart: unless-stopped
+
+volumes:
+  airflow-db:

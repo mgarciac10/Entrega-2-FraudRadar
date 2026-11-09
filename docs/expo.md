@@ -54,7 +54,7 @@ Sirven como respuesta a "¿qué problemas tuvieron?"; cada una enseñó algo de 
 
 ## 6. Para la demo
 
-- Correo de alerta llegando en vivo; consulta Q8 (fraude evitable) y Q5 a Q7 en Athena.
+- Correo de alerta llegando en vivo; consulta Q8 (fraude evitable) y Q5 a Q9 en Athena.
 - Matar un job de Spark y mostrar que no hay duplicados al reiniciar (exactly-once).
 - DAG de Airflow en verde.
 - **Cuidado:** a 50 ev/s salen ~20 correos por minuto. Demo de alertas a 10-20 ev/s; pruebas de carga con la suscripción de SNS pausada.
