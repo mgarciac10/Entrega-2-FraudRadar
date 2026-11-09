@@ -104,8 +104,10 @@ def read_json_alerts(path):
 def scan_alerts(table_name, region, endpoint_url):
     import boto3
 
+    # DynamoDB Local no valida credenciales, pero boto3 exige que existan. En AWS: rol de la EC2.
+    local_creds = {"aws_access_key_id": "local", "aws_secret_access_key": "local"} if endpoint_url else {}
     table = boto3.resource(
-        "dynamodb", region_name=region, endpoint_url=endpoint_url or None
+        "dynamodb", region_name=region, endpoint_url=endpoint_url or None, **local_creds
     ).Table(table_name)
     items = []
     request = {}

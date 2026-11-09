@@ -41,7 +41,9 @@ def get_table():
     endpoint = os.environ.get("DYNAMODB_ENDPOINT_URL") or None  # solo para DynamoDB local
     # Perfil del proyecto por defecto (CLAUDE.md): nunca el `default`, que puede ser de otro proyecto
     profile = None if endpoint else os.environ.get("AWS_PROFILE", "fraudradar")
-    session = boto3.Session(profile_name=profile, region_name=os.environ.get("AWS_REGION", "us-east-2"))
+    # DynamoDB Local no valida credenciales, pero boto3 exige que existan
+    local_creds = {"aws_access_key_id": "local", "aws_secret_access_key": "local"} if endpoint else {}
+    session = boto3.Session(profile_name=profile, region_name=os.environ.get("AWS_REGION", "us-east-2"), **local_creds)
     return session.resource("dynamodb", endpoint_url=endpoint).Table(TABLE)
 
 
