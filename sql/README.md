@@ -16,7 +16,9 @@
 
 Definición: para cada `attack_id`, la primera alerta se vincula mediante `transaction_ids` y `trigger_event_ts`. `fraudradar_evitable_cop` suma transacciones fraudulentas posteriores al primer disparo; sin alerta, el monto evitable es cero. El escenario de reporte diario usa como corte la medianoche siguiente al inicio del ataque.
 
-Q7 calcula falsos positivos solo sobre alertas revisadas: `descartada` es falso positivo y `confirmada` es positivo confirmado. `abierta` no entra al denominador. Q9 calcula precisión por alerta y recall por ataque distinto, usando `is_fraud_injected`, `attack_id` y `attack_pattern`; una alerta solo es verdadero positivo si referencia una transacción del ataque esperado por esa regla.
+Q7 calcula falsos positivos solo sobre alertas revisadas: `descartada` es falso positivo y `confirmada` es positivo confirmado. `abierta` no entra al denominador. Q9 calcula precisión por alerta y recall por ataque distinto, usando `is_fraud_injected`, `attack_id` y `attack_pattern`. Como los ataques se solapan a propósito (un monto acumulado grande también es atípico), da dos precisiones: `precision` (la alerta cae sobre fraude real de cualquier patrón: lo que le importa al analista) y `precision_patron` (cae sobre un ataque de su propio patrón). Y dos recall: `recall` (ataques detectados por su propia regla) y `recall_cualquier` (detectados por alguna regla, lo que mide Q8).
+
+Las cinco consultas se validaron en Spark SQL sobre el Gold de `tests/spark_check_silver_to_gold.py`, cambiando solo `CROSS JOIN UNNEST` por `CROSS JOIN LATERAL explode`. Falta correrlas en Athena.
 
 Registro en AWS, una vez que `gold/` exista en S3:
 
