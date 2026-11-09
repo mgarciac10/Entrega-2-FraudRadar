@@ -1,10 +1,13 @@
 -- Q8: monto fraudulento ocurrido después de la primera alerta frente al reporte diario.
+-- El reporte diario sale a la medianoche de Colombia (UTC-5, sin horario de verano). event_ts está
+-- en UTC: se pasa a hora local, se trunca al día y se suma un día y las 5 h para volver a UTC.
 WITH attacks AS (
     SELECT
         attack_id,
         attack_pattern,
         MIN(event_ts) AS attack_start,
-        DATE_TRUNC('day', MIN(event_ts)) + INTERVAL '1' DAY AS daily_report_ts,
+        DATE_TRUNC('day', MIN(event_ts) - INTERVAL '5' HOUR) + INTERVAL '1' DAY + INTERVAL '5' HOUR
+            AS daily_report_ts,
         SUM(amount_cop) AS total_fraud_cop
     FROM fraudradar.fact_transaction
     WHERE is_fraud_injected AND attack_id IS NOT NULL

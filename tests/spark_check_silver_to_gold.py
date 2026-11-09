@@ -75,15 +75,17 @@ tx_schema = T.StructType([
     T.StructField("kafka_session", T.StringType(), False),
     T.StructField("kafka_partition", T.IntegerType(), False),
     T.StructField("kafka_offset", T.LongType(), False),
+    T.StructField("_processed_at", T.TimestampType(), False),  # lo pone bronze_to_silver en cada lote
 ])
+P0, P1, P2 = datetime(2026, 11, 8, 10, 15), datetime(2026, 11, 8, 10, 30), datetime(2026, 11, 9, 3, 15)
 transactions = spark.createDataFrame(
     [
         ("tx1", datetime(2026, 11, 8, 10, 0), "u1", "P2P", "app", 1000, None,
-         "C1", "Medellin", "Antioquia", True, "atk1", "rafaga", "local", 0, 1),
+         "C1", "Medellin", "Antioquia", True, "atk1", "rafaga", "local", 0, 1, P0),
         ("tx2", datetime(2026, 11, 8, 10, 1), "u1", "P2P", "app", 2000, None,
-         "C1", "Medellin", "Antioquia", True, "atk1", "rafaga", "local", 0, 2),
+         "C1", "Medellin", "Antioquia", True, "atk1", "rafaga", "local", 0, 2, P0),
         ("tx3", datetime(2026, 11, 8, 10, 2), "u2", "PAGO", "qr", 50000, "M1",
-         "C2", "Bogota", "Cundinamarca", False, None, None, "local", 1, 1),
+         "C2", "Bogota", "Cundinamarca", False, None, None, "local", 1, 1, P1),
     ],
     tx_schema,
 )
@@ -107,13 +109,16 @@ alerts = [
         "evidence": {},
     },
 ]
-alert_rows = [normalize_alert(item) for item in alerts]
-alert_df = spark.createDataFrame(alert_rows, ALERT_SCHEMA)
-(
-    alert_df.withColumn("_run_id", F.lit("test"))
-    .withColumn("_extracted_at", F.current_timestamp())
-    .write.format("delta").mode("overwrite").save(f"{LAKE}/silver/alert_status")
-)
+def write_alerts(items):
+    rows = [normalize_alert(item) for item in items]
+    (
+        spark.createDataFrame(rows, ALERT_SCHEMA).withColumn("_run_id", F.lit("test"))
+        .withColumn("_extracted_at", F.current_timestamp())
+        .write.format("delta").mode("overwrite").save(f"{LAKE}/silver/alert_status")
+    )
+
+
+write_alerts(alerts)
 
 submit("batch/silver_to_gold.py", "--run-id", "gold-test")
 fact_tx = spark.read.format("delta").load(f"{LAKE}/gold/fact_transaction")
@@ -138,12 +143,47 @@ check(
 )
 submit("batch/data_quality_checks.py", "--run-id", "gold-test")
 
-submit("batch/silver_to_gold.py", "--run-id", "gold-test-retry")
+# Hora de Colombia: tx1 es 10:00 UTC = 05:00 en Bogotá (madrugada), no 10:00 (mañana)
+tx1 = fact_tx.filter("transaction_id = 'tx1'").first()
+dim_time = spark.read.format("delta").load(f"{LAKE}/gold/dim_time")
+check(tx1["time_key"] == 500 and dim_time.filter("time_key = 500").first()["time_band"] == "madrugada",
+      f"time_key y franja en hora de Colombia (time_key={tx1['time_key']})")
+
+out = submit("batch/silver_to_gold.py", "--run-id", "gold-test-retry")
 check(
     spark.read.format("delta").load(f"{LAKE}/gold/fact_transaction").count() == 3
     and spark.read.format("delta").load(f"{LAKE}/gold/fact_alert").count() == 2,
     "reintentar silver_to_gold no duplica filas",
 )
+check("1 transacciones pendientes" in out, "el reintento solo relee el último lote de Silver, no toda la historia")
+
+# Corrida incremental: llega tx4 (otro lote de Silver) y una alerta nueva que referencia tx2, ya cargada.
+# tx4 es 03:00 UTC del 9 = 22:00 del 8 en Bogotá: su fecha local es el 8 y su franja, noche.
+spark.createDataFrame(
+    [("tx4", datetime(2026, 11, 9, 3, 0), "u2", "P2P", "app", 3000, None,
+      "C2", "Bogota", "Cundinamarca", False, None, None, "local", 1, 2, P2)],
+    tx_schema,
+).withColumn("event_date", F.to_date("event_ts")).write.format("delta").mode("append").save(
+    f"{LAKE}/silver/transactions")
+write_alerts(alerts + [{
+    "alert_id": "alert3", "user_id": "u1", "rule": "rafaga",
+    "window_start": "2026-11-08T10:01:00Z", "status": "abierta",
+    "amount_at_risk_cop": 2000, "transaction_ids": ["tx2"],
+    "trigger_event_ts": "2026-11-08T10:01:00Z", "created_at": "2026-11-08T10:01:30Z", "evidence": {},
+}])
+out = submit("batch/silver_to_gold.py", "--run-id", "gold-test-incremental")
+fact_tx = spark.read.format("delta").load(f"{LAKE}/gold/fact_transaction")
+check("2 transacciones pendientes" in out, "la corrida incremental toma tx3 (último lote) y tx4, no tx1 ni tx2")
+check(fact_tx.count() == 4, f"fact_transaction suma la transacción nueva ({fact_tx.count()})")
+check(fact_tx.filter("transaction_id = 'tx2'").first()["is_flagged"],
+      "una alerta posterior marca una transacción ya cargada en Gold")
+check(fact_tx.filter("transaction_id = 'tx1'").first()["_run_id"] == "gold-test",
+      "tx1 no se reescribió en corridas posteriores")
+tx4 = fact_tx.filter("transaction_id = 'tx4'").first()
+check(str(tx4["event_date"]) == "2026-11-08" and tx4["date_key"] == 20261108 and tx4["time_key"] == 2200,
+      f"fecha local de Colombia: {tx4['event_date']}, {tx4['date_key']}, {tx4['time_key']}")
+check(spark.read.format("delta").load(f"{LAKE}/gold/fact_alert").count() == 3, "fact_alert suma la alerta nueva")
+submit("batch/data_quality_checks.py", "--run-id", "gold-test-incremental")
 check(
     DeltaTable.isDeltaTable(spark, f"{LAKE}/gold/fact_transaction"),
     "fact_transaction es una tabla Delta",

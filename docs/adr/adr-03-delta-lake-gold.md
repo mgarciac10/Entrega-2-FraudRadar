@@ -31,6 +31,8 @@ Gold es una **constelación**: dos tablas de hechos que comparten dimensiones co
 **Carga:**
 - `extract_alert_status` copia DynamoDB a `silver.alert_status` (JSON local en desarrollo); Spark es el único escritor de Delta.
 - `silver_to_gold` construye dimensiones tipo 1 con llaves SHA-256 determinísticas y carga los hechos con MERGE por llave de negocio. Reejecutar Airflow no duplica filas.
+- La carga es incremental: `fact_transaction` guarda `_silver_processed_at` y cada corrida toma de Silver solo lo procesado desde esa marca. Una alerta posterior marca `is_flagged` con un MERGE solo sobre las transacciones que referencia. Así una corrida no reescribe toda la historia cada 15 min.
+- Fecha, hora y franja (`date_key`, `time_key`, `event_date`, `dim_time.time_band`) van en hora de Colombia (`America/Bogota`); `event_ts` y `trigger_event_ts` quedan en UTC. Si no, la "madrugada" de Q5 quedaría corrida 5 horas.
 - `fact_transaction` se particiona por fecha e indica si la transacción aparece en los `transaction_ids` de una alerta.
 - `fact_transaction` conserva sesión, partición y offset Kafka para reconstruir el linaje (RNF-06).
 - `fact_alert` conserva `transaction_ids`, estado, latencia y la ubicación del evento que disparó la alerta para auditoría y consultas Q5–Q9.

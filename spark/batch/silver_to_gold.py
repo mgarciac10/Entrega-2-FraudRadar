@@ -3,6 +3,17 @@
 Las dimensiones son tipo 1. Los hechos se fusionan por sus llaves de negocio, de modo que
 reintentar el mismo DAG actualiza las filas sin duplicarlas.
 
+Incremental: fact_transaction guarda `_silver_processed_at` (el `_processed_at` de Silver). Cada
+corrida toma de Silver solo lo procesado desde la marca más alta ya cargada en Gold, en vez de releer
+y reescribir toda la historia cada 15 min. Dos casos aparte:
+  - is_flagged: una alerta nueva puede referenciar transacciones cargadas en corridas anteriores (la
+    ventana de una ráfaga empieza antes); un MERGE solo sobre esas filas las marca.
+  - fact_alert se recalcula con todas las alertas: es pequeña y su estado cambia (el analista la
+    confirma o descarta).
+
+Hora local: las llaves de fecha y hora (date_key, time_key, la franja de dim_time y event_date) van en
+hora de Colombia (America/Bogota, UTC-5 sin horario de verano). event_ts y trigger_event_ts siguen en UTC.
+
 Uso:
   spark-submit spark/batch/silver_to_gold.py [--run-id <run_id>]
   spark-submit spark/batch/silver_to_gold.py --dimensions-only
@@ -18,6 +29,8 @@ from pyspark.sql import functions as F
 from schemas import ATTACK_PATTERNS, CHANNELS
 from spark_session import get_spark, lake_path
 
+LOCAL_TZ = "America/Bogota"
+
 
 def read_silver(spark, name):
     path = lake_path("silver", name)
@@ -30,7 +43,37 @@ def _hashed_key(column):
     return F.sha2(column.cast("string"), 256)
 
 
-def upsert(spark, name, dataframe, key, run_id, partition_by=None):
+def _local(column):
+    """Timestamp UTC -> hora de pared en Colombia (la sesión de Spark está en UTC)."""
+    return F.from_utc_timestamp(column, LOCAL_TZ)
+
+
+def _date_key(column):
+    return F.date_format(_local(column), "yyyyMMdd").cast("int")
+
+
+def _time_key(column):
+    return F.hour(_local(column)) * 100 + F.minute(_local(column))
+
+
+def pending_transactions(spark, transactions):
+    """Filas de Silver que aún no están en Gold: _processed_at >= la marca más alta ya cargada.
+
+    `>=` y no `>`: el último lote se reprocesa, y el MERGE lo absorbe sin duplicar. Si Gold no existe,
+    todo Silver es pendiente (carga inicial).
+    """
+    path = lake_path("gold", "fact_transaction")
+    if not DeltaTable.isDeltaTable(spark, path):
+        return transactions
+    gold = spark.read.format("delta").load(path)
+    if "_silver_processed_at" not in gold.columns:
+        raise RuntimeError(f"{path} es de una versión anterior sin _silver_processed_at: bórrala y vuelve a correr")
+    mark = gold.agg(F.max("_silver_processed_at")).first()[0]
+    return transactions if mark is None else transactions.filter(F.col("_processed_at") >= F.lit(mark))
+
+
+def upsert(spark, name, dataframe, key, run_id, partition_by=None, prune_dates=None):
+    """MERGE por llave de negocio. `prune_dates` (columna event_date) limita los archivos a revisar."""
     path = lake_path("gold", name)
     source = (
         dataframe.dropDuplicates([key])
@@ -43,9 +86,15 @@ def upsert(spark, name, dataframe, key, run_id, partition_by=None):
             writer = writer.partitionBy(partition_by)
         writer.save(path)
         return
+    condition = f"target.{key} = source.{key}"
+    if prune_dates is not None:
+        first = source.agg(F.min(prune_dates)).first()[0]
+        if first is None:
+            return  # nada nuevo
+        condition += f" AND target.{prune_dates} >= DATE'{first.isoformat()}'"
     (
         DeltaTable.forPath(spark, path).alias("target")
-        .merge(source.alias("source"), f"target.{key} = source.{key}")
+        .merge(source.alias("source"), condition)
         .whenMatchedUpdateAll()
         .whenNotMatchedInsertAll()
         .execute()
@@ -57,6 +106,7 @@ def _first_non_null(name):
 
 
 def build_dimensions(spark, transactions, alerts, run_id):
+    """`transactions` son solo las filas pendientes: las dimensiones ya tienen lo anterior."""
     users = read_silver(spark, "users").select(
         "user_id", "kyc_level", "segment", "registered_at", "home_city_code"
     )
@@ -137,11 +187,12 @@ def build_dimensions(spark, transactions, alerts, run_id):
     )
     upsert(spark, "dim_rule", rule_rows, "rule_key", run_id)
 
-    event_times = transactions.select(F.col("event_ts").alias("event_ts")).unionByName(
-        alerts.select(F.col("trigger_event_ts").alias("event_ts"))
-    ).filter(F.col("event_ts").isNotNull())
+    # Fechas y horas en hora de Colombia: la franja "madrugada" es la madrugada local, no la de UTC
+    local_times = transactions.select(_local("event_ts").alias("ts")).unionByName(
+        alerts.select(_local("trigger_event_ts").alias("ts"))
+    ).filter(F.col("ts").isNotNull())
     date_rows = (
-        event_times.select(F.to_date("event_ts").alias("date"))
+        local_times.select(F.to_date("ts").alias("date"))
         .distinct()
         .withColumn("date_key", F.date_format("date", "yyyyMMdd").cast("int"))
         .withColumn("year", F.year("date"))
@@ -155,10 +206,10 @@ def build_dimensions(spark, transactions, alerts, run_id):
     )
     upsert(spark, "dim_date", date_rows, "date_key", run_id)
 
-    hour = F.hour("event_ts")
-    minute = F.minute("event_ts")
     time_rows = (
-        event_times.select((F.hour("event_ts") * 100 + F.minute("event_ts")).alias("time_key"), hour.alias("hour"), minute.alias("minute"))
+        local_times.select(
+            (F.hour("ts") * 100 + F.minute("ts")).alias("time_key"), F.hour("ts").alias("hour"),
+            F.minute("ts").alias("minute"))
         .distinct()
         .withColumn(
             "time_band",
@@ -172,18 +223,22 @@ def build_dimensions(spark, transactions, alerts, run_id):
     upsert(spark, "dim_time", time_rows, "time_key", run_id)
 
 
-def build_fact_transaction(spark, transactions, alerts, run_id):
-    flagged = (
+def _flagged_ids(alerts):
+    return (
         alerts.select(F.explode("transaction_ids").alias("transaction_id"))
         .filter(F.col("transaction_id").isNotNull())
         .distinct()
-        .withColumn("_is_flagged", F.lit(True))
     )
+
+
+def build_fact_transaction(spark, transactions, alerts, run_id):
+    """`transactions` son solo las filas pendientes de Silver."""
+    flagged = _flagged_ids(alerts).withColumn("_is_flagged", F.lit(True))
     rows = (
         transactions
-        .withColumn("event_date", F.to_date("event_ts"))
-        .withColumn("date_key", F.date_format("event_ts", "yyyyMMdd").cast("int"))
-        .withColumn("time_key", F.hour("event_ts") * 100 + F.minute("event_ts"))
+        .withColumn("event_date", F.to_date(_local("event_ts")))
+        .withColumn("date_key", _date_key("event_ts"))
+        .withColumn("time_key", _time_key("event_ts"))
         .join(flagged, "transaction_id", "left")
         .withColumn("is_flagged", F.coalesce(F.col("_is_flagged"), F.lit(False)))
         .join(spark.read.format("delta").load(lake_path("gold", "dim_user")).select("user_id", "user_key"),
@@ -199,12 +254,24 @@ def build_fact_transaction(spark, transactions, alerts, run_id):
             "user_key", "merchant_key", "location_key", "channel_key",
             "tx_type", "amount_cop", "is_flagged", "is_fraud_injected", "attack_id", "attack_pattern",
             "kafka_session", "kafka_partition", "kafka_offset",
+            F.col("_processed_at").alias("_silver_processed_at"),
         )
     )
-    upsert(spark, "fact_transaction", rows, "transaction_id", run_id, "event_date")
+    upsert(spark, "fact_transaction", rows, "transaction_id", run_id, "event_date", prune_dates="event_date")
+
+    # Transacciones ya cargadas que una alerta posterior referencia: solo se reescriben esos archivos
+    (
+        DeltaTable.forPath(spark, lake_path("gold", "fact_transaction")).alias("target")
+        .merge(_flagged_ids(alerts).alias("source"),
+               "target.transaction_id = source.transaction_id AND NOT target.is_flagged")
+        .whenMatchedUpdate(set={"is_flagged": F.lit(True), "_run_id": F.lit(run_id),
+                                "_updated_at": F.current_timestamp()})
+        .execute()
+    )
 
 
 def build_fact_alert(spark, transactions, alerts, run_id):
+    """`transactions` es todo Silver (se lee, no se reescribe): ubica cada alerta en su ciudad."""
     exploded = alerts.select(
         "alert_id", "trigger_event_ts", F.explode_outer("transaction_ids").alias("transaction_id")
     )
@@ -227,9 +294,9 @@ def build_fact_alert(spark, transactions, alerts, run_id):
     )
     rows = (
         alerts.join(alert_locations, "alert_id", "left")
-        .withColumn("event_date", F.to_date("trigger_event_ts"))
-        .withColumn("date_key", F.date_format("trigger_event_ts", "yyyyMMdd").cast("int"))
-        .withColumn("time_key", F.hour("trigger_event_ts") * 100 + F.minute("trigger_event_ts"))
+        .withColumn("event_date", F.to_date(_local("trigger_event_ts")))
+        .withColumn("date_key", _date_key("trigger_event_ts"))
+        .withColumn("time_key", _time_key("trigger_event_ts"))
         .withColumn("detection_latency_s", F.unix_timestamp("created_at") - F.unix_timestamp("trigger_event_ts"))
         .withColumn("n_transactions", F.coalesce(F.size("transaction_ids"), F.lit(0)))
         .withColumn("user_key", _hashed_key(F.col("user_id")))
@@ -256,11 +323,14 @@ def main():
     spark.sparkContext.setLogLevel("WARN")
     transactions = read_silver(spark, "transactions")
     alerts = read_silver(spark, "alert_status")
+    # Se calcula antes de tocar fact_transaction: dimensiones y hechos ven las mismas filas pendientes
+    pending = pending_transactions(spark, transactions).cache()
+    print(f"silver_to_gold: {pending.count()} transacciones pendientes de Silver")
 
     if not args.facts_only:
-        build_dimensions(spark, transactions, alerts, args.run_id)
+        build_dimensions(spark, pending, alerts, args.run_id)
     if not args.dimensions_only:
-        build_fact_transaction(spark, transactions, alerts, args.run_id)
+        build_fact_transaction(spark, pending, alerts, args.run_id)
         build_fact_alert(spark, transactions, alerts, args.run_id)
     for name in ("dim_date", "dim_time", "dim_user", "dim_merchant", "dim_location", "dim_channel", "dim_rule",
                  "fact_transaction", "fact_alert"):
