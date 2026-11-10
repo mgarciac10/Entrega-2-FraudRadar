@@ -55,10 +55,6 @@ def get_spark(app_name, **conf):
         # El driver de Airflow y los ejecutores Spark usan UID distintos en el volumen local.
         # Deja archivos y directorios Delta con escritura de grupo para que ambos puedan confirmar.
         .config("spark.hadoop.fs.permissions.umask-mode", "0002")
-        # Disco local (solo desarrollo): sin sumas de verificación .crc. Con el sistema de archivos
-        # local por defecto, Delta falla con ChecksumException al releer su propio _delta_log.
-        # En S3 no aplica.
-        .config("spark.hadoop.fs.file.impl", "org.apache.hadoop.fs.RawLocalFileSystem")
         # S3A: inofensivo si el job trabaja con rutas locales
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
         .config("spark.hadoop.fs.s3a.endpoint.region", os.environ.get("AWS_REGION", "us-east-2"))
@@ -66,6 +62,19 @@ def get_spark(app_name, **conf):
         .config("spark.hadoop.fs.s3a.aws.credentials.provider",
                 "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
     )
+    if _lake_on_local_disk():
+        # Disco local (solo desarrollo): sin sumas de verificación .crc. Con el sistema de archivos
+        # local por defecto, Delta falla con ChecksumException al releer su propio _delta_log.
+        # NO en S3: S3A prepara las subidas en disco local y exige LocalFileSystem; con esto falla
+        # con ClassCastException (RawLocalFileSystem cannot be cast to LocalFileSystem).
+        builder = builder.config("spark.hadoop.fs.file.impl", "org.apache.hadoop.fs.RawLocalFileSystem")
     for key, value in conf.items():
         builder = builder.config(key.replace("__", "."), value)
     return builder.getOrCreate()
+
+
+def _lake_on_local_disk():
+    try:
+        return not lake_uri().startswith(("s3a://", "s3://"))
+    except RuntimeError:  # sin LAKE_URI ni S3_BUCKET: pruebas que solo usan rutas locales
+        return True
