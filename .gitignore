@@ -45,3 +45,6 @@ infra/.build/
 .DS_Store
 Thumbs.db
 ~$*
+
+# Clips y edición del video de la demo (pesados: se comparten por enlace, no por git)
+video/
