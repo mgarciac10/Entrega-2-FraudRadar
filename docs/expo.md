@@ -65,12 +65,13 @@ Sirven como respuesta a "¿qué problemas tuvieron?"; cada una enseñó algo de 
 
 ## 7. Números reales por medir (completar durante las pruebas)
 
-- [ ] Latencia evento → alerta, p50 y p95 (meta: p95 < 2 min)
+- [x] Latencia evento → alerta en AWS (2026-11-10, 10 ev/s): en operación normal (03:40–04:10 UTC, 214 alertas) p50 de 36 a 40 s y máximo 70 s: meta cumplida. Al ponerse al día tras el arranque, p50 68 s y máximo 158 s; tras matar `detect-fraud`, hasta 261 s, y se normaliza en pocos lotes. Cada micro-batch tarda 16 a 20 s (trigger de 15 s): casi todo es costo fijo (estado en S3 y releer el perfil)
+- [x] Prueba de caída en AWS: `kill -9` a `detect-fraud`; se levantó solo y retomó en el lote siguiente del checkpoint (102 → 103) sin alertas repetidas
 - [ ] Throughput sostenido: 200 ev/s por 10 min y pico de 1.000 ev/s por 60 s (consumer lag vuelve a < 30 s en 2 min)
 - [x] Evento → Bronze en local: como máximo ~15 s (el trigger) en operación normal. Tras matar `ingest_bronze` ~1 min, el primer lote al reiniciar recuperó 1.197 eventos sin pérdidas ni duplicados (Kafka = Bronze = 6.039). Falta medirlo en AWS
-- [ ] Evento → Gold (meta ≤ 20 min)
-- [ ] Precisión y recall por regla, medidos con las etiquetas (Q9)
-- [ ] Fraude evitable (Q8): porcentaje del monto fraudulento posterior a la primera alerta, por patrón
+- [ ] Evento → Gold (meta ≤ 20 min): **no se cumple todavía.** En AWS una corrida de `lakehouse_15min` tardó 26 min (5 de `bronze_to_silver`, 3 de alertas, 7 de dimensiones, ~5 de hechos), con `optimize_and_vacuum` corriendo encima (más de 45 min sobre 21 tablas en S3). Causas a corregir: `build_dimensions` reescribe `dim_user` completa en cada corrida, y el mantenimiento diario compite con el DAG de 15 min
+- [x] Precisión y recall por regla (Q9, AWS, ~1 h a 10 ev/s): recall 1,0 en las cuatro reglas. Precisión 1,0 en ráfaga, monto acumulado y viaje imposible; 0,72 en monto atípico (26 de 94 alertas sobre usuarios normales). Su `precision_patron` es 0,17 porque la mayoría de sus alertas caen sobre ataques de monto acumulado (solapamiento a propósito)
+- [x] Fraude evitable (Q8, AWS): monto acumulado 71,9 % (88 M de 122,5 M), viaje imposible 56,3 %, ráfaga 15,7 %, monto atípico 0 % (es una sola transacción: no se detiene, como dice el posicionamiento). El reporte diario no habría evitado nada en ningún patrón
 - [ ] Tiempo de recuperación tras reiniciar una EC2 (meta < 10 min)
 
 ## 8. Qué cambiaríamos con más tiempo
@@ -79,3 +80,4 @@ Sirven como respuesta a "¿qué problemas tuvieron?"; cada una enseñó algo de 
 - Calificación en la autorización (capa 1) para detener la primera transacción.
 - MSK con 3 brokers en 3 zonas y KRaft; autenticación IAM en lugar de solo grupo de seguridad.
 - Cola de mensajes fallidos en la Lambda y resumen agrupado de alertas en lugar de un correo por alerta.
+- Interfaz del analista: hoy confirma o descarta con un script o la consola de DynamoDB (mínimo para RF-08). Siguiente paso: botones en el correo (API Gateway + Lambda con la misma escritura) y un tablero de casos ordenado por monto en riesgo, sobre el índice `user_id-status-index` que ya existe.

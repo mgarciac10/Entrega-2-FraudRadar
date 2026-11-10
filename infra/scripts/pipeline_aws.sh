@@ -5,7 +5,9 @@
 #   start               arranca Spark, ingest-bronze, detect-fraud y Airflow (STREAM_SESSION nueva)
 #   status              estado de los contenedores y de las corridas de los DAG
 #   dag <dag_id>        activa el DAG y lanza una corrida (daily_batch primero, luego lakehouse_15min)
-#   logs <servicio>     últimas líneas de un servicio (ingest-bronze, detect-fraud, airflow-scheduler...)
+#   logs <servicio> [N|Nm]  últimas N líneas, o los últimos N minutos (p. ej. 5m), de un servicio
+#   kill <servicio>     mata un job de streaming de golpe (SIGKILL), como una caída: restart: always lo
+#                       levanta y retoma desde su checkpoint (prueba de RNF-03, sin duplicados)
 #   register            registra las tablas de Gold en Glue (después de la primera corrida de Gold)
 #   stop                detiene los contenedores (los datos quedan en S3 y DynamoDB)
 # Las interfaces (Airflow 8081, Spark 8080) se ven con reenvío de puertos de Session Manager:
@@ -35,10 +37,19 @@ case "$ACTION" in
     DAG="${2:?Uso: pipeline_aws.sh dag <daily_batch|lakehouse_15min>}"
     run_remote "$SPARK" "$AIRFLOW dags unpause $DAG && $AIRFLOW dags trigger $DAG" ;;
   logs)
-    run_remote "$SPARK" "$COMPOSE logs --tail ${3:-40} ${2:?Uso: pipeline_aws.sh logs <servicio>}" ;;
+    # 3er argumento: N líneas (--tail) o Nm minutos (--since). Tras un reinicio del contenedor,
+    # --tail puede devolver líneas de corridas anteriores; --since respeta el orden.
+    LIMIT="${3:-40}"
+    case "$LIMIT" in *m) OPT="--since $LIMIT" ;; *) OPT="--tail $LIMIT" ;; esac
+    run_remote "$SPARK" "$COMPOSE logs $OPT ${2:?Uso: pipeline_aws.sh logs <servicio> [N|Nm]}" ;;
+  kill)
+    SVC="${2:?Uso: pipeline_aws.sh kill <ingest-bronze|detect-fraud>}"
+    # kill -9 al proceso del job (no `docker kill`, que Docker toma como parada manual y no reinicia)
+    JOB="$(echo "$SVC" | tr - _).py"
+    run_remote "$SPARK" "pkill -9 -f '$JOB' && echo 'proceso de $SVC terminado con kill -9'; sleep 20; $COMPOSE ps --format 'table {{.Service}}\t{{.Status}}' $SVC" ;;
   register)
     run_remote "$SPARK" "$COMPOSE run --rm --no-deps -v /opt/fraudradar/sql/athena:/opt/fraudradar/sql/athena:ro spark-master python3 /opt/fraudradar/sql/athena/register_gold_tables.py --database fraudradar --lake-uri s3a://$S3_BUCKET/lake --region $REGION" ;;
   stop)
     run_remote "$SPARK" "$COMPOSE stop" ;;
-  *) echo "Uso: pipeline_aws.sh start|status|dag <id>|logs <servicio>|register|stop"; exit 1 ;;
+  *) echo "Uso: pipeline_aws.sh start|status|dag <id>|logs <servicio>|kill <servicio>|register|stop"; exit 1 ;;
 esac
