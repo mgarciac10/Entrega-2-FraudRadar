@@ -9,8 +9,8 @@ cada elemento y a la evidencia de cada criterio de la rúbrica. Estado al 2026-1
 |---|---|---|
 | README con instrucciones para correr el pipeline desde cero | [`README.md`](../../README.md) | Listo |
 | `docker-compose.yml` en la raíz | [`docker-compose.yml`](../../docker-compose.yml) | Listo |
-| Bitácora de delegación de agentes de IA | [`docs/bitacora_ia.md`](../bitacora_ia.md) | Al día (filas 1 a 28); falta que el equipo complete la columna "Decisión del equipo" |
-| Slides de la presentación (máximo 15) | `docs/entregable2/` (este directorio) | Pendiente |
+| Bitácora de delegación de agentes de IA | [`docs/bitacora_ia.md`](../bitacora_ia.md) | Completa (filas 1 a 29, con la decisión del equipo) |
+| Slides de la presentación (máximo 15) | [`slides_fraudradar.pdf`](slides_fraudradar.pdf) (12 slides, con notas del presentador en el deck) | Listo |
 | El pipeline corre antes de S16 (ensayo obligatorio el día anterior) | Corrida completa en AWS el 2026-11-10 ([README §6](../../README.md)) | Corrió; falta el ensayo |
 | Cada integrante puede responder sobre cualquier parte | [`docs/expo.md`](../expo.md), [ADRs](../adr/README.md) | Preparación individual |
 
@@ -18,16 +18,18 @@ cada elemento y a la evidencia de cada criterio de la rúbrica. Estado al 2026-1
 
 | Elemento | Dónde está |
 |---|---|
-| Slides | `docs/entregable2/` (pendiente) |
+| Slides | [`slides_fraudradar.pdf`](slides_fraudradar.pdf) |
 | Diagrama de arquitectura final | [`docs/arquitectura/arquitectura.png`](../arquitectura/arquitectura.png) ([editable](../arquitectura/arquitectura.drawio)) |
 | Puntos de la exposición y números medidos | [`docs/expo.md`](../expo.md) (sección 7: mediciones en AWS) |
 | Cambios frente al E1 y su justificación (criterio "Reflexión sobre decisiones") | [`docs/cambios_vs_E1.md`](../cambios_vs_E1.md) y la sección "Cambio respecto al E1" de cada [ADR](../adr/README.md) |
-| Guía de la demo en vivo | [README §6](../../README.md) (sesión en AWS, paso a paso) |
-| Video del recorrido completo (3 min 26 s) | Enlace pendiente. El archivo no va en git (pesa demasiado); se genera desde `video/editor` con Remotion |
+| Demo: video del recorrido completo (3 min 26 s) | Enlace pendiente. El archivo no va en git (pesa demasiado); se genera desde `video/editor` con Remotion |
+| Cómo reproducir la sesión de la demo | [README §6](../../README.md) (sesión en AWS, paso a paso) |
 
-**Sobre el video:** la guía exige que el pipeline corra en vivo durante la sesión, y la rúbrica le da
-0 % a "una demo que es un video pregrabado sin justificación". El video sirve como respaldo si AWS
-falla ese día y para mostrar partes que no caben en 8 minutos; no reemplaza la demo en vivo.
+**Por qué la demo es un video (justificación que pide la rúbrica):** el pipeline cobra por hora y
+Amazon MSK tarda de 20 a 30 minutos en crearse y no se puede pausar, así que el stack se crea y se
+borra en cada sesión. El video es una sesión real completa en AWS (2026-11-10), con las mediciones de
+[`docs/expo.md`](../expo.md). Lo persistente sigue disponible sin el stack: Gold en S3 y Glue, Athena
+y DynamoDB, así que Q5 a Q9 y las alertas se pueden consultar en vivo si el docente lo pide.
 
 ## Evidencia por criterio de la rúbrica (repositorio)
 
