@@ -1,6 +1,6 @@
 # tests
 
-Verificaciones de Spark (`bash tests/run_spark_checks.sh`): `ingest_catalogs`, `bronze_to_silver` (validación, rechazados, MERGE sin duplicados y relectura completa de Bronze), `build_user_profile` (mezcla con el perfil inicial, ventana de 30 días) y `detect_fraud` (streaming real con archivos como fuente, en varios micro-batches). `spark_check_ingest_bronze.py` compara Kafka con Bronze y se usa en la prueba de matar el job.
+Verificaciones de Spark (`bash tests/run_spark_checks.sh`): `ingest_catalogs`, `bronze_to_silver` (validación, rechazados, MERGE sin duplicados y relectura completa de Bronze), `build_user_profile` (mezcla con el perfil inicial, ventana de 30 días), `detect_fraud` (streaming real con archivos como fuente, en varios micro-batches) y `silver_to_gold` (dimensiones, hechos, idempotencia, linaje y chequeos de calidad). `spark_check_ingest_bronze.py` compara Kafka con Bronze y se usa en la prueba de matar el job.
 
 Pruebas de las reglas de fraude y de las transformaciones, más las pruebas de requisitos no funcionales que se muestran en la demo:
 
@@ -17,6 +17,7 @@ Pruebas de las reglas de fraude y de las transformaciones, más las pruebas de r
 | `test_fraud_rules.py` | Lógica de las 4 reglas (`spark/streaming/fraud_rules.py`) contra `reference_rules.py` con tráfico aleatorio, episodios (una ráfaga = una alerta) y estado serializado entre lotes | `python -m unittest tests.test_fraud_rules -v` (solo biblioteca estándar) |
 | `test_analyst_alertas.py` | Herramienta del analista (`analyst/alertas.py`): listar, marcar sin crear alertas fantasma, resumen | `python -m unittest tests.test_analyst_alertas -v` (requiere `boto3` y `moto`; si falta moto se omite) |
 | `test_notify_alert.py` | Lambda `notify_alert`: publica solo INSERT, asunto ASCII y lote parcial | `python -m unittest tests.test_notify_alert -v` (requiere `boto3`) |
+| `test_register_gold_tables.py` | Conversión de tipos Delta a Athena y selección del commit Delta actual para Glue (sin conexión AWS) | `python -m unittest tests.test_register_gold_tables -v` |
 
 `tests/reference_rules.py` es la implementación de **referencia** de las 4 reglas en Python puro: la especificación ejecutable de lo que debe detectar `detect_fraud`, para compararla con la versión en Spark.
 

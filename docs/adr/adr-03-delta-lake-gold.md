@@ -23,15 +23,21 @@ Gold es una **constelación**: dos tablas de hechos que comparten dimensiones co
 
 | Hecho | Grano | Llaves | Medidas y atributos |
 |---|---|---|---|
-| `fact_transaction` | una transacción | fecha, hora, usuario, comercio, ubicación, canal | `amount_cop`, `is_flagged`, `is_fraud_injected`, `attack_id` |
-| `fact_alert` | una alerta | fecha, hora, usuario, regla, ubicación | `amount_at_risk_cop`, `n_transactions`, `detection_latency_s`, `trigger_event_ts`. Dimensión degenerada: `status` |
+| `fact_transaction` | una transacción | fecha, hora, usuario, comercio, ubicación, canal | `amount_cop`, `is_flagged`, `is_fraud_injected`, `attack_id`, `kafka_session`, `kafka_partition`, `kafka_offset` |
+| `fact_alert` | una alerta | fecha, hora, usuario, regla, ubicación | `amount_at_risk_cop`, `n_transactions`, `detection_latency_s`, `trigger_event_ts`, `transaction_ids`. Dimensión degenerada: `status` |
 
 **Dimensiones:** `dim_date`, `dim_time`, `dim_user`, `dim_merchant`, `dim_location`, `dim_channel` y `dim_rule`. Las compartidas son fecha, hora, usuario y ubicación.
 
 **Carga:**
-- `silver_to_gold` carga Gold con MERGE por llave de negocio. Reejecutar la misma corrida de Airflow no duplica filas.
-- El estado de cada alerta se lee de DynamoDB.
-- `fact_transaction` se particiona por fecha.
+- `extract_alert_status` copia DynamoDB a `silver.alert_status` (JSON local en desarrollo); Spark es el único escritor de Delta.
+- `silver_to_gold` construye dimensiones tipo 1 con llaves SHA-256 determinísticas y carga los hechos con MERGE por llave de negocio. Reejecutar Airflow no duplica filas.
+- La carga es incremental: `fact_transaction` guarda `_silver_processed_at` y cada corrida toma de Silver solo lo procesado desde esa marca. Una alerta posterior marca `is_flagged` con un MERGE solo sobre las transacciones que referencia. Así una corrida no reescribe toda la historia cada 15 min.
+- Fecha, hora y franja (`date_key`, `time_key`, `event_date`, `dim_time.time_band`) van en hora de Colombia (`America/Bogota`); `event_ts` y `trigger_event_ts` quedan en UTC. Si no, la "madrugada" de Q5 quedaría corrida 5 horas.
+- `fact_transaction` se particiona por fecha e indica si la transacción aparece en los `transaction_ids` de una alerta.
+- `fact_transaction` conserva sesión, partición y offset Kafka para reconstruir el linaje (RNF-06).
+- `fact_alert` conserva `transaction_ids`, estado, latencia y la ubicación del evento que disparó la alerta para auditoría y consultas Q5–Q9.
+- `data_quality_checks` valida unicidad, llaves foráneas, dominios y medidas antes de finalizar el DAG.
+- `sql/athena/register_gold_tables.py` registra la versión Delta actual de las nueve tablas de Gold en Glue; Athena las consulta en modo lectura.
 
 **Con `is_fraud_injected` y `attack_id`**, Gold calcula:
 - La precisión y el recall de cada regla, cruzando las transacciones marcadas por el productor con las alertadas.
@@ -39,12 +45,13 @@ Gold es una **constelación**: dos tablas de hechos que comparten dimensiones co
 
 ## Consecuencias
 
-- **Más código en `silver_to_gold`.** Hay que mantener dimensiones y llaves sustitutas.
+- **Más código en los jobs Gold.** Hay que mantener dimensiones y llaves sustitutas.
 - **Sin historial en las dimensiones.** Son SCD tipo 1: no conservan el historial de cambios (por ejemplo, del nivel KYC).
 - **Archivos pequeños.** Los micro-batches generan muchos archivos chicos, así que `optimize_and_vacuum` corre a diario.
 - **Athena solo lee.** Todas las escrituras pasan por Spark.
 - **`is_fraud_injected` solo existe con datos sintéticos.** Con datos reales se reemplazaría por las etiquetas tardías y el feedback del analista.
 - **Estado desfasado.** El estado de las alertas en Gold puede ir hasta 15 min atrás de las decisiones del analista.
+- **Etiquetas de prueba.** Q8 y Q9 dependen del `attack_id` y `attack_pattern` sintéticos; no representan una etiqueta disponible en producción en tiempo real.
 
 ## Cambio respecto al E1
 

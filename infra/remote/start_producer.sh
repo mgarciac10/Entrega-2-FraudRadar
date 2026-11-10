@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Corre EN LA EC2 (lo lanza producer_aws.sh por SSM). Genera los catálogos y arranca el productor.
-# Uso: bash start_producer.sh <brokers TLS> [tasa en ev/s]
+# Uso: bash start_producer.sh <brokers TLS> [tasa en ev/s] [bucket] [región]
+# Con bucket, sube los catálogos a s3://<bucket>/landing/: Spark (ingest_catalogs) tiene que leer los
+# mismos usuarios y comercios que usa el productor.
 set -euo pipefail
 export HOME=/root
 BROKERS="${1:?Falta la lista de brokers TLS}"
 RATE="${2:-20}"
+BUCKET="${3:-}"
+REGION="${4:-us-east-2}"
 
 cd /opt/fraudradar
 docker compose --profile producer down 2>/dev/null || true
@@ -13,6 +17,10 @@ docker compose --profile producer down 2>/dev/null || true
 USERS=$(( RATE * 600 > 100000 ? RATE * 600 : 100000 ))
 rm -rf data/catalogs
 python3 producer/generate_catalogs.py --users "$USERS" --merchants 1000 --seed 42 --out data/catalogs
+if [ -n "$BUCKET" ]; then
+  aws s3 cp data/catalogs "s3://$BUCKET/landing/" --recursive --region "$REGION" --only-show-errors
+  echo "catálogos en s3://$BUCKET/landing/"
+fi
 
 cat > .env <<EOF
 KAFKA_BOOTSTRAP_SERVERS=$BROKERS

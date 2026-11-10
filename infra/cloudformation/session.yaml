@@ -161,6 +161,18 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AlertsTable}"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AlertsTable}/index/*"
+              # register_gold_tables.py (pipeline_aws.sh register): solo la base fraudradar del catálogo
+              - Effect: Allow
+                Action:
+                  - glue:GetDatabase
+                  - glue:CreateDatabase
+                  - glue:GetTable
+                  - glue:CreateTable
+                  - glue:UpdateTable
+                Resource:
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/fraudradar"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/fraudradar/*"
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -168,7 +180,7 @@ Resources:
       Roles:
         - !Ref InstanceRole
 
-  # EC2 #1: Spark (master, worker y jobs de streaming y batch)
+  # EC2 #1: Spark (master, worker, jobs de streaming y batch) y Airflow
   SparkInstance:
     Type: AWS::EC2::Instance
     Properties:
@@ -208,7 +220,7 @@ Resources:
         - Key: Name
           Value: fraudradar-spark
 
-  # EC2 #2: Airflow y productor
+  # EC2 #2: productor (Airflow va en la EC2 de Spark, ADR-05)
   AppInstance:
     Type: AWS::EC2::Instance
     Properties:

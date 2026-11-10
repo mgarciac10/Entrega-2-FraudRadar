@@ -16,7 +16,9 @@ Episodio: en ráfaga y monto acumulado la regla sigue cumpliéndose en cada tran
 la ventana siga "caliente". Eso es UN solo ataque, no varios: el primer disparo abre el episodio, fija
 `window_start` (la transacción más antigua de la ventana en ese momento) y los siguientes disparos lo
 reutilizan. Como alert_id = hash(user_id, regla, window_start), todos caen en la misma alerta.
-El episodio termina cuando la regla deja de cumplirse.
+El episodio termina cuando la regla deja de cumplirse o cuando el último disparo ya quedó fuera de
+la ventana (sin eso, una sola transacción enorme lejos de un episodio anterior no daba alerta nueva).
+En la libreta, cada episodio es [window_start, último disparo].
 
 Tiempos en milisegundos desde epoch (enteros): sin zonas horarias ni errores de redondeo.
 """
@@ -99,10 +101,18 @@ def evaluate(state, events, cfg=None):
                 evidence = {"total_amount_cop": total, "max_amount_cop": cfg["monto_acumulado"]["max_amount_cop"],
                             "window_minutes": cfg["monto_acumulado"]["window_minutes"]}
             if hit:
-                first = episodes[rule] is None
+                ep = episodes[rule]
+                if isinstance(ep, int):  # libreta de una versión anterior: [inicio, último disparo]
+                    ep = [ep, ep]
+                # Episodio nuevo si no hay uno abierto o si el último disparo ya salió de la ventana:
+                # p. ej. una sola tx > max_amount_cop 20 min después de otro episodio es otro ataque
+                first = ep is None or e["ts_ms"] - ep[1] > window
                 if first:
-                    episodes[rule] = in_win[0][TS]  # inicio de la ventana al primer disparo
-                fires.append(_fire(rule, episodes[rule], e, [r[TX_ID] for r in in_win],
+                    ep = [in_win[0][TS], e["ts_ms"]]  # inicio de la ventana al primer disparo
+                else:
+                    ep[1] = max(ep[1], e["ts_ms"])
+                episodes[rule] = ep
+                fires.append(_fire(rule, ep[0], e, [r[TX_ID] for r in in_win],
                                    sum(r[AMOUNT] for r in in_win), evidence, first))
             else:
                 episodes[rule] = None

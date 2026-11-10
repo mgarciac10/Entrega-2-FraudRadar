@@ -129,10 +129,11 @@ def dynamodb_writer():
     import boto3
     from botocore.exceptions import ClientError
 
+    endpoint = os.environ.get("DYNAMODB_ENDPOINT_URL") or None  # solo para DynamoDB local
+    # DynamoDB Local no valida credenciales, pero boto3 exige que existan. En AWS: rol de la EC2.
+    local_creds = {"aws_access_key_id": "local", "aws_secret_access_key": "local"} if endpoint else {}
     table = boto3.resource(
-        "dynamodb",
-        region_name=os.environ.get("AWS_REGION", "us-east-2"),
-        endpoint_url=os.environ.get("DYNAMODB_ENDPOINT_URL") or None,  # solo para DynamoDB local
+        "dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-2"), endpoint_url=endpoint, **local_creds,
     ).Table(os.environ.get("ALERTS_TABLE", "fraud_alerts"))
 
     def write(batch, batch_id):

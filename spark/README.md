@@ -1,6 +1,6 @@
 # spark
 
-Jobs de Spark 3.5 con Delta Lake. Corren en contenedores sobre EC2.
+Jobs de Spark 3.5 con Delta Lake. Corren en contenedores localmente y en EC2.
 
 ## streaming/ (continuos, `restart: always`)
 
@@ -16,7 +16,18 @@ Jobs de Spark 3.5 con Delta Lake. Corren en contenedores sobre EC2.
 | `ingest_catalogs.py` | Mateo García | diario | CSV de `landing/` → `bronze.catalogs` |
 | `bronze_to_silver.py` | Juan José Gómez | 15 min | Lectura incremental de Bronze (`trigger(availableNow=True)`), valida esquema, deduplica con MERGE, enriquece con usuario y comercio, rechazados a `silver.transactions_rejected` |
 | `build_user_profile.py` | Juan José Vargas | diario | Promedio y número de transacciones de los últimos 30 días por usuario → `silver.user_profile` |
-| `silver_to_gold.py` | Luis Moreno | 15 min | Dimensiones y MERGE de `fact_transaction` (con `is_fraud_injected` y `attack_id`) y `fact_alert` (con `trigger_event_ts`; estado de alertas leído de DynamoDB) |
+| `extract_alert_status.py` | Luis Moreno | 15 min | Copia el estado de `fraud_alerts` de DynamoDB a `silver.alert_status`; admite JSON local para pruebas sin AWS |
+| `silver_to_gold.py` | Luis Moreno | 15 min | MERGE tipo 1 de dimensiones y de `fact_transaction` y `fact_alert`; conserva `is_fraud_injected`, `attack_id`, `trigger_event_ts` y estado |
+| `data_quality_checks.py` | Luis Moreno | 15 min | Comprueba unicidad, llaves foráneas, dominios y medidas en las tablas Gold |
+| `optimize_and_vacuum.py` | Luis Moreno | diario | Compacta tablas Delta existentes y ejecuta VACUUM con retención mínima de 7 días |
+
+### Cómo correr los jobs de Luis
+
+- **`extract_alert_status.py`** lee la tabla DynamoDB `fraud_alerts` con paginación y reescribe `silver/alert_status`. Sin AWS, configurar `ALERTS_SOURCE=local-json` y `ALERTS_JSON=/opt/fraudradar/tests/fixtures/alerts.json`.
+- **`silver_to_gold.py`** lee `silver/transactions`, los catálogos Silver y `silver/alert_status`. Llaves sustitutas SHA-256 determinísticas y MERGE por llave de negocio hacen idempotentes dimensiones y hechos. `--dimensions-only` y `--facts-only` permiten que Airflow ordene esas etapas.
+- **`data_quality_checks.py`** falla la tarea si detecta llaves duplicadas/nulas, referencias rotas, medidas inválidas o estados fuera del contrato.
+- **`optimize_and_vacuum.py`** compacta las tablas Delta disponibles y conserva la retención segura mínima de 168 horas.
+- **Glue/Athena**: después de una carga Gold en S3, ejecutar `python sql/athena/register_gold_tables.py`; Q5–Q9 viven en `sql/athena/`. Este paso requiere AWS y no se ejecuta en el flujo local.
 
 ### Cómo correr los jobs de Vargas
 
@@ -33,15 +44,22 @@ Esquemas (evento JSON, Silver, alerta) y configuración compartida. Los esquemas
 
 - **Sesión y rutas:** todo job usa `spark_session.get_spark()` y `lake_path()`. Las ubicaciones salen de `LAKE_URI`, `LANDING_URI` y `CHECKPOINT_URI` (o de `S3_BUCKET`), así el mismo código corre en AWS (`s3a://...`) y en local (`/data/...`).
 - **Imagen:** `spark/Dockerfile` trae Spark 3.5.3, Delta 3.2.1, S3A y el conector de Kafka ya descargados. El código se monta (no se copia): editar un job no obliga a reconstruir.
-- **Clúster local:** `docker compose --profile spark up -d --build` (master + worker; UI en http://localhost:8080). Los jobs se lanzan con `spark-submit --master spark://spark-master:7077`. Probado con `ingest_catalogs`: la aplicación termina `FINISHED` y escribe las 4 tablas Delta.
+- **Clúster local:** `docker compose --profile spark up -d --build` (master + worker; UI en http://localhost:8080). En local el worker reserva 2 núcleos y 2 GB (`SPARK_WORKER_CORES`/`SPARK_WORKER_MEMORY`); aumentar solo si Docker Desktop tiene memoria suficiente. Los jobs se lanzan con `spark-submit --master spark://spark-master:7077`.
 - **Prueba de un job:** `tests/run_spark_checks.sh` (ejemplo para `ingest_catalogs`: filas, linaje, tipos, idempotencia). Cada job nuevo debería traer su verificación equivalente.
 - **Idempotencia:** `ingest_catalogs` usa `replaceWhere` por `_run_id`: un reintento de Airflow reemplaza solo su corrida. Los jobs de streaming se apoyan en el checkpoint, y los de Silver y Gold en `MERGE`.
+
+### Pruebas de Gold
+
+`tests/run_spark_checks.sh` incluye `spark_check_silver_to_gold.py`: prepara Silver y alertas sintéticas,
+valida las dos tablas de hechos y las dimensiones, repite el MERGE y ejecuta `data_quality_checks.py`.
+El chequeo no requiere Kafka, AWS, DynamoDB ni Glue.
 
 ### Trampas conocidas
 
 - **Git Bash en Windows convierte rutas:** `/opt/spark/...` y variables como `LAKE_URI=/data/lake` se vuelven `C:/Program Files/Git/...`. Hay que activar `MSYS_NO_PATHCONV=1` antes de `docker compose up` **y** de `exec`: las variables se fijan al crear los contenedores, así que si se exportaron sin la bandera hay que recrearlos. El síntoma es `No FileSystem for scheme "C"`.
 - **Delta en disco local** falla con `ChecksumException` si se usa el sistema de archivos local por defecto; `get_spark()` ya fija `RawLocalFileSystem`. En S3 no aplica.
+- **Permisos del lake local:** Airflow ejecuta el driver Spark como UID 50000 y los ejecutores como UID 185. Compose comparte los grupos y `get_spark()` fija `fs.permissions.umask-mode=0002` para que ambos puedan confirmar las mismas tablas Delta. Si los volúmenes ya existían, aplicar una vez los comandos de reparación de `airflow/README.md`.
+- **Python del driver y los workers:** mantener la misma versión menor. La imagen de Airflow usa Python 3.10, como la imagen Spark; si una de ellas cambia, actualizar la otra.
 - **Credenciales en la EC2:** vienen del rol de la instancia. Los contenedores están un salto detrás del host, así que la plantilla de la sesión fija `HttpPutResponseHopLimit: 2`; con el valor por defecto (1) Spark no leería S3 ni DynamoDB. **Esto aún no se probó en una EC2 real.**
 - **Checkpoints de streaming:** al recrear MSK los offsets del checkpoint ya no existen. Usar una ruta de checkpoint nueva por sesión.
-- **Memoria del worker:** por defecto 10 GB (pensado para la EC2 de 16 GB). En un portátil, `SPARK_WORKER_MEMORY=2g SPARK_WORKER_CORES=2`.
-
+- **Memoria del worker:** por defecto 2 GB y 2 núcleos para Docker Desktop. En AWS, sobreescribir `SPARK_WORKER_MEMORY` y `SPARK_WORKER_CORES` según el tamaño de la instancia.
